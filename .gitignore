@@ -1,0 +1,28 @@
+cat << 'EOF' >> .gitignore
+
+# Virtual environment
+.venv/
+env/
+venv/
+
+# Environment variables & API keys
+.env
+*.env
+
+# Large data files and cache
+data/
+*.parquet
+*.csv
+
+# Logs & transcripts
+logs/
+*.jsonl
+*.log
+
+# Mac system junk
+.DS_Store
+
+# Python cache
+__pycache__/
+*.py[cod]
+EOF
