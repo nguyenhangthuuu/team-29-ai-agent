@@ -1,3 +1,4 @@
+# src/pipeline/data_loader.py
 import yfinance as yf
 import pandas as pd
 import numpy as np
@@ -5,33 +6,47 @@ from pathlib import Path
 from src.pipeline.etf_universe import ETF_UNIVERSE
 
 def fetch_and_normalize_prices(period="3y") -> pd.DataFrame:
-    """Downloads prices from Yahoo Finance, converts USD prices to EUR, and forward-fills gaps."""
+    """
+    Downloads prices from Yahoo Finance, converts non-EUR prices to EUR using EURUSD=X,
+    and returns a clean DataFrame with all 50 ETFs.
+    """
     symbols = list(set([etf.yf_symbol for etf in ETF_UNIVERSE]))
     print(f"Downloading historical data for {len(symbols)} instruments + EURUSD FX...")
     
     # Download symbols + FX exchange rate
-    raw = yf.download(symbols + ["EURUSD=X"], period=period, auto_adjust=False)["Adj Close"]
+    raw = yf.download(symbols + ["EURUSD=X"], period=period, auto_adjust=False)
     
-    eur_usd = raw["EURUSD=X"]
-    prices_eur = pd.DataFrame(index=raw.index)
+    # In yfinance, extract 'Close'
+    if "Close" in raw.columns:
+        close_data = raw["Close"]
+    else:
+        close_data = raw
+    
+    eur_usd = close_data["EURUSD=X"]
+    prices_eur = pd.DataFrame(index=close_data.index)
 
+    missing_count = 0
     for etf in ETF_UNIVERSE:
-        if etf.yf_symbol in raw.columns:
-            s = raw[etf.yf_symbol]
+        if etf.yf_symbol in close_data.columns:
+            series = close_data[etf.yf_symbol]
             if etf.currency == "USD":
-                # Convert USD into EUR (Price_EUR = Price_USD / FX_rate)
-                prices_eur[etf.ticker] = s / eur_usd
+                # Convert USD into EUR: EUR = USD / (USD per EUR)
+                prices_eur[etf.ticker] = series / eur_usd
             else:
-                prices_eur[etf.ticker] = s
+                prices_eur[etf.ticker] = series
         else:
             print(f"Warning: {etf.ticker} ({etf.yf_symbol}) missing in download!")
+            missing_count += 1
 
-    # Forward fill missing values and drop initial empty rows
+    # Forward fill missing weekend/holiday discrepancies and clean
     prices_eur = prices_eur.ffill().dropna(how="all")
+    print(f"Extraction complete. Missing: {missing_count}. Total columns: {prices_eur.shape[1]}")
     return prices_eur
 
 def compute_quant_features(prices: pd.DataFrame, window=60):
-    """Computes daily returns, rolling annualized volatility, rolling max drawdown, and correlations."""
+    """
+    Computes daily returns, rolling annualized volatility, rolling max drawdown, and correlations.
+    """
     daily_returns = prices.pct_change().dropna()
     
     # Annualized Volatility (daily std * sqrt(252))
