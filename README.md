@@ -210,8 +210,6 @@ Enter Action: [A] Approve Orders | [M] Modify Notes | [R] Reject:
 | Date | Milestone | Deliverable / Focus |
 | :--- | :--- | :--- |
 | **Oct 12, 2026** | **QDC Kick-off** | Challenge introduced by QTEM, Belfius, and QuantumBlack. |
-| **Oct 27, 2026** | **Belfius Deep-Dive Session** | ReBel 2030 strategy, asset management principles, and trading rules. |
-| **Oct 29, 2026** | **QuantumBlack Workshop** | Agentic AI theory, LangGraph design, and prompt governance. |
 | **Nov 22, 2026** | **Mid-Term Report Delivery** | 8-page PDF report covering research question, data pipeline, and initial AI architecture. |
 | **Dec 7–23, 2026** | **Live Trading Window** | 5 fixed submission dates (Dec 7, 10, 14, 17, 21) via official Belfius form. |
 | **Jan 16, 2027** | **Final Delivery** | 25-page main report, 15-slide pitch deck, executive summary, code repository, and trade audit logs. |
