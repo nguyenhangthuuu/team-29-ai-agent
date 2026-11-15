@@ -5,7 +5,6 @@
 [![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-orange.svg)](https://github.com/langchain-ai/langgraph)
 [![Belfius](https://img.shields.io/badge/Partner-Belfius%20Bank-red.svg)](https://www.belfius.be)
 [![QuantumBlack](https://img.shields.io/badge/Partner-QuantumBlack%20%7C%20McKinsey-black.svg)](https://www.mckinsey.com/capabilities/quantumblack)
-[![Status](https://img.shields.io/badge/Status-Task%201--3%20Complete-brightgreen.svg)]()
 
 ---
 
