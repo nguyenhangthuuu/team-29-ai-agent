@@ -12,6 +12,7 @@ from src.orchestration.state import AgentState, PortfolioProposal, OrderItem
 from src.orchestration.logger import log_event
 from src.agents.technical import evaluate_all_etfs
 from src.agents.risk import RiskManager
+from src.agents.macro import evaluate_macro_agent
 from src.pipeline.etf_universe import ETF_UNIVERSE
 
 load_dotenv()
@@ -64,45 +65,27 @@ def technical_node(state: AgentState) -> Dict[str, Any]:
     }
 
 def macro_node(state: AgentState) -> Dict[str, Any]:
-    """Node 3: Evaluates macro regime, interest rates, and geopolitical context."""
-    openai_key = os.getenv("OPENAI_API_KEY")
+    """
+    Node 3: Evaluates macro regime using Fed Communication (Apel-Grimaldi & LM)
+    plus real-time market indicators (VIX, 10Y Yields, Oil, DXY).
+    """
+    trade_date = state.get("trading_date", "2026-11-18")
+    briefing_obj = evaluate_macro_agent(trading_date=trade_date)
     
-    if openai_key:
-        try:
-            from langchain_openai import ChatOpenAI
-            llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.2)
-            prompt = (
-                "Provide a concise 3-sentence macro briefing for a European ETF portfolio in Nov 2026. "
-                "Highlight ECB/Fed rate trajectory, European vs US equity momentum, and commodity risks."
-            )
-            response = llm.invoke(prompt)
-            briefing = response.content.strip()
-            tokens = getattr(response, "response_metadata", {}).get("token_usage")
-            log_event(
-                event_type="MACRO_LLM_SYNTHESIS",
-                node_name="macro_node",
-                prompt=prompt,
-                response=briefing,
-                token_usage=tokens,
-                payload={"mode": "openai_llm"}
-            )
-        except Exception as e:
-            briefing = (
-                "Central banks maintain steady interest rate policies. European markets exhibit moderate "
-                "resilience with consumer staples and healthcare leading, while crypto and leveraged metals "
-                "face volatility headwinds."
-            )
-            log_event("MACRO_FALLBACK", "macro_node", payload={"error": str(e), "briefing": briefing})
-    else:
-        briefing = (
-            "Macro Regime: Modest growth with disinflation. Central banks approaching neutral policy rates. "
-            "European blue chips and defensive healthcare show positive relative momentum. Digital assets "
-            "and leveraged commodities remain high-risk due to elevated volatility."
-        )
-        log_event("MACRO_DETERMINISTIC", "macro_node", payload={"briefing": briefing})
-
+    log_event(
+        event_type="MACRO_ANALYSIS",
+        node_name="macro_node",
+        payload={
+            "regime": briefing_obj.macro_regime,
+            "sentiment_score": briefing_obj.market_sentiment_score,
+            "fed_hd_score": briefing_obj.fed_hawkish_dovish_score,
+            "lm_uncertainty": briefing_obj.fed_uncertainty_score,
+            "theme_tilts": briefing_obj.theme_macro_tilts,
+            "tail_risks": briefing_obj.tail_risk_alerts
+        }
+    )
     return {
-        "macro_briefing": briefing,
+        "macro_briefing": briefing_obj.executive_summary,
         "execution_status": "MACRO_COMPLETED"
     }
 
