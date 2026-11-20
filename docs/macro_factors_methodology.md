@@ -1,7 +1,4 @@
 # Macroeconomic Factor Engine & Methodology
-### ReBel Agentic AI Challenge | QTEM Data Challenge (QDC) 2026–2027 | Team 29
-
----
 
 ## Executive Overview
 

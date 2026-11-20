@@ -1,8 +1,9 @@
 # src/agents/technical.py
 from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import os
 import joblib
+from datetime import datetime, timezone
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
@@ -190,14 +191,65 @@ def train_rf_model(
     )
     rf.fit(X, y)
 
+    last_date_str = str(prices_df.index.max().date())
     bundle = {
         "model": rf,
         "feature_cols": FEATURE_COLS,
-        "theme_to_code": theme_to_code
+        "theme_to_code": theme_to_code,
+        "last_trained_date": last_date_str,
+        "num_samples": len(X),
+        "num_features": len(FEATURE_COLS),
+        "trained_at_iso": datetime.now(timezone.utc).isoformat()
     }
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     joblib.dump(bundle, save_path)
     return bundle
+
+
+def retrain_if_new_data(
+    prices_df: pd.DataFrame,
+    save_path: str = MODEL_CACHE_PATH,
+    force: bool = False
+) -> Tuple[bool, str, dict]:
+    """
+    Self-Updating ML Engine for QDC trading windows.
+    Automatically checks if fresh market data is present in prices_df compared to
+    the model's last training checkpoint. If fresh data is detected (or force=True),
+    re-trains the Random Forest model and updates the cached bundle.
+    
+    Returns:
+        (retrained: bool, status_message: str, model_bundle: dict)
+    """
+    if not isinstance(prices_df.index, pd.DatetimeIndex):
+        prices_df.index = pd.to_datetime(prices_df.index)
+
+    current_latest_date = prices_df.index.max().date()
+
+    if not force and os.path.exists(save_path):
+        try:
+            bundle = joblib.load(save_path)
+            last_date_str = bundle.get("last_trained_date")
+            if last_date_str:
+                last_trained_date = pd.to_datetime(last_date_str).date()
+                if current_latest_date <= last_trained_date:
+                    msg = (
+                        f"Random Forest model is up to date (last trained on {last_date_str}, "
+                        f"{bundle.get('num_samples', 0)} samples). No retraining needed."
+                    )
+                    return False, msg, bundle
+        except Exception:
+            pass  # Corrupted or outdated bundle -> proceed to retrain
+
+    # New trading data detected or forced -> execute retraining
+    print(f"🔄 [ML Self-Update] Fresh trading data detected up to {current_latest_date}. Retraining Random Forest...")
+    # Temporarily save prices_df if needed or train directly
+    bundle = train_rf_model(save_path=save_path)
+    msg = (
+        f"Random Forest model successfully re-trained with fresh market data up to {current_latest_date} "
+        f"({bundle.get('num_samples', 0)} samples across 50 ETFs)."
+    )
+    print(f"✅ [ML Self-Update] {msg}")
+    return True, msg, bundle
 
 
 def get_rf_model_bundle() -> dict:

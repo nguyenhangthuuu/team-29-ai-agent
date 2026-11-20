@@ -1,0 +1,1282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Belfius ReBel | Neo-Terminal Agentic Trader</title>
+  <!-- Google Fonts: DM Sans & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            belfius: {
+              DEFAULT: '#B40036',
+              hover: '#9E002F',
+              border: '#450A1E',
+              subtle: '#1C060E',
+            },
+            rebel: {
+              lilac: '#E9D5FF',
+              lilacMuted: '#C084FC',
+            },
+            terminal: {
+              bg: '#080A0F',
+              panel: '#0E121B',
+              panelHover: '#131824',
+              border: '#1A2130',
+              borderSubtle: '#121722',
+              textMuted: '#8492A6',
+              textHigh: '#F8FAFC',
+            }
+          },
+          fontFamily: {
+            sans: ['"DM Sans"', '-apple-system', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background-color: #080A0F;
+      color: #F8FAFC;
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 300;
+      font-size: 0.8125rem;
+      letter-spacing: -0.015em;
+      overflow-x: hidden;
+    }
+    h1 { font-size: 1.75rem; font-weight: 600; line-height: 1.25; }
+    h2 { font-size: 1.35rem; font-weight: 600; line-height: 1.3; }
+    h3 { font-size: 1.05rem; font-weight: 500; line-height: 1.35; }
+    body, p { font-size: 0.8125rem; }
+    .tnum {
+      font-family: 'JetBrains Mono', monospace;
+      font-feature-settings: 'tnum' 1;
+      font-variant-numeric: tabular-nums;
+    }
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #080A0F;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1A2130;
+      border-radius: 2px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #B40036;
+    }
+    .has-tooltip {
+      position: relative;
+      cursor: help;
+    }
+    .tooltip-content {
+      visibility: hidden;
+      opacity: 0;
+      position: absolute;
+      z-index: 100;
+      bottom: 120%;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 290px;
+      background: #0E121B;
+      border: 1px solid #B40036;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-size: 0.72rem;
+      line-height: 1.4;
+      color: #F8FAFC;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.7);
+      transition: opacity 0.12s ease-in-out, visibility 0.12s ease-in-out;
+      pointer-events: none;
+    }
+    .has-tooltip:hover .tooltip-content {
+      visibility: visible;
+      opacity: 1;
+    }
+    /* Modal backdrop */
+    .modal-backdrop {
+      background: rgba(8, 10, 15, 0.85);
+      backdrop-filter: blur(4px);
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col antialiased selection:bg-belfius selection:text-white">
+
+  <!-- TOP STATUS TICKER BAR (Responsive & Fluid) -->
+  <header class="border-b border-terminal-border bg-terminal-panel/95 backdrop-blur sticky top-0 z-50 px-3 sm:px-6 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs">
+    <div class="flex items-center space-x-3">
+      <div class="flex items-center space-x-2">
+        <span class="w-2 h-2 rounded-full bg-belfius"></span>
+        <span class="font-bold tracking-wider text-base text-white">BELFIUS <span class="text-belfius">ReBel</span></span>
+      </div>
+      <span class="text-terminal-border">/</span>
+      <span class="text-rebel-lilac text-xs font-medium tracking-tight">QDC Team 29</span>
+      <span class="text-terminal-border hidden md:inline">/</span>
+      <span class="text-terminal-textMuted hidden md:inline text-xs">QuantumBlack x Belfius MAS</span>
+    </div>
+
+    <!-- Live Market Ticker Strip -->
+    <div class="hidden lg:flex items-center space-x-5 tnum text-xs">
+      <div><span class="text-terminal-textMuted">VIX: </span><span id="ticker-vix" class="text-white font-medium">16.42</span></div>
+      <div><span class="text-terminal-textMuted">EUR/USD: </span><span id="ticker-eurusd" class="text-emerald-400 font-medium">1.0845</span></div>
+      <div><span class="text-terminal-textMuted">Gold/Oil: </span><span id="ticker-goldoil" class="text-amber-300 font-medium">24.8x</span></div>
+      <div><span class="text-terminal-textMuted">Regime: </span><span id="ticker-regime" class="px-2 py-0.5 rounded text-[11px] bg-emerald-950/70 text-emerald-400 border border-emerald-800 font-medium">RISK_ON</span></div>
+    </div>
+
+    <div class="flex items-center space-x-2.5">
+      <!-- Newbie Mode Toggle -->
+      <button id="newbie-toggle-btn" onclick="toggleNewbieMode()" class="px-2.5 py-1 rounded border border-belfius/40 hover:border-belfius bg-belfius-subtle text-rebel-lilac text-xs flex items-center space-x-1.5 transition">
+        <i data-lucide="help-circle" class="w-3.5 h-3.5 text-belfius"></i>
+        <span>Newbie Mode: <strong id="newbie-status" class="text-white">ON</strong></span>
+      </button>
+
+      <!-- Execution Date Display -->
+      <div class="flex items-center space-x-1.5 bg-terminal-bg px-2.5 py-1 rounded border border-terminal-border text-xs tnum">
+        <i data-lucide="calendar" class="w-3.5 h-3.5 text-terminal-textMuted"></i>
+        <span class="text-terminal-textMuted hidden sm:inline">Close Date:</span>
+        <select id="date-select" onchange="onDateChanged()" class="bg-transparent text-white font-medium focus:outline-none cursor-pointer">
+          <!-- Populated dynamically up to 2026-11-20 -->
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- MAIN TERMINAL LAYOUT -->
+  <main class="flex-1 max-w-[1600px] w-full mx-auto p-3 sm:p-5 lg:p-6 space-y-5">
+
+    <!-- NEWBIE EXPLAINER BANNER -->
+    <div id="newbie-banner" class="bg-terminal-panel border border-belfius/40 rounded p-4 relative transition-all duration-200">
+      <div class="flex items-start justify-between gap-3">
+        <div class="space-y-1.5">
+          <div class="flex items-center space-x-2">
+            <span class="px-2 py-0.5 rounded text-[10px] uppercase font-semibold bg-belfius text-white tracking-wide">Interactive Guide</span>
+            <h2 class="text-base font-semibold text-white tracking-tight">Institutional ReBel Operations Desk</h2>
+          </div>
+          <p class="text-xs text-terminal-textMuted max-w-5xl leading-relaxed">
+            Hover over any indicator with a dotted underline (<span class="border-b border-dotted border-belfius text-rebel-lilac">such as this</span>) to read its quantitative calculation. 
+            Use <strong class="text-white">[C] Challenge</strong> to inspect runner-up recommendations (Ranks 6 to 10) with economic trade-off evidence, and <strong class="text-white">[M] Modify</strong> to adjust portfolio weights with live pre-trade risk compliance checks.
+          </p>
+        </div>
+        <button onclick="dismissNewbieBanner()" class="text-terminal-textMuted hover:text-white p-1">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- KPI SUMMARY BAR (5 High-Density Cards) -->
+    <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+      <!-- KPI 1: NAV -->
+      <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 space-y-1 hover:border-belfius/60 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-terminal-textMuted uppercase font-medium tracking-wider has-tooltip">
+            Portfolio NAV
+            <span class="tooltip-content">Mark-to-Market Portfolio Net Asset Value in EUR. Starts at initial competition capital of €10,000.</span>
+          </span>
+          <i data-lucide="wallet" class="w-3.5 h-3.5 text-belfius"></i>
+        </div>
+        <div id="kpi-nav" class="text-2xl font-light tnum text-white">€10,000.00</div>
+        <div class="text-[11px] text-terminal-textMuted">Mark-to-Market Real-time</div>
+      </div>
+
+      <!-- KPI 2: Cumulative Return -->
+      <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 space-y-1 hover:border-belfius/60 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-terminal-textMuted uppercase font-medium tracking-wider has-tooltip">
+            Cumulative Return
+            <span class="tooltip-content">Percentage gain/loss since inception (€10,000 baseline).</span>
+          </span>
+          <i data-lucide="trending-up" class="w-3.5 h-3.5 text-emerald-400"></i>
+        </div>
+        <div id="kpi-return" class="text-2xl font-light tnum text-emerald-400">+0.00%</div>
+        <div class="text-[11px] text-terminal-textMuted">Net of zero fees mandate</div>
+      </div>
+
+      <!-- KPI 3: Cash Reserve -->
+      <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 space-y-1 hover:border-belfius/60 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-terminal-textMuted uppercase font-medium tracking-wider has-tooltip">
+            Available Cash
+            <span class="tooltip-content">Unallocated cash reserve. Competition policy mandates minimum 5.0% cash at all times.</span>
+          </span>
+          <i data-lucide="shield" class="w-3.5 h-3.5 text-rebel-lilac"></i>
+        </div>
+        <div id="kpi-cash" class="text-2xl font-light tnum text-white">€1,500.00 <span class="text-xs text-rebel-lilac font-normal">(15.0%)</span></div>
+        <div class="text-[11px] text-terminal-textMuted">Policy buffer compliant</div>
+      </div>
+
+      <!-- KPI 4: 1D 95% VaR -->
+      <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 space-y-1 hover:border-belfius/60 transition">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-terminal-textMuted uppercase font-medium tracking-wider has-tooltip">
+            1D 95% Parametric VaR
+            <span class="tooltip-content">Value at Risk (VaR): Maximum projected 1-day portfolio drawdown with 95% confidence based on covariance matrix.</span>
+          </span>
+          <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-400"></i>
+        </div>
+        <div id="kpi-var" class="text-2xl font-light tnum text-amber-300">1.48%</div>
+        <div class="text-[11px] text-terminal-textMuted">Target ceiling &le; 3.00%</div>
+      </div>
+
+      <!-- KPI 5: MiFID II Risk Gate -->
+      <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 space-y-1 hover:border-belfius/60 transition col-span-2 sm:col-span-1">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] text-terminal-textMuted uppercase font-medium tracking-wider has-tooltip">
+            Policy Risk Gate
+            <span class="tooltip-content">Automated multi-factor risk engine: enforces single asset &le; 20%, theme &le; 35%, leverage &le; 15%, cash &ge; 5%.</span>
+          </span>
+          <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-400"></i>
+        </div>
+        <div id="kpi-gate" class="text-2xl font-light text-emerald-400 flex items-center space-x-1.5">
+          <span>PASSED</span>
+        </div>
+        <div class="text-[11px] text-terminal-textMuted">100% Mandate Compliant</div>
+      </div>
+    </div>
+
+    <!-- PORTFOLIO PERFORMANCE TRACKING CHART (New Institutional Tracking Section) -->
+    <div class="bg-terminal-panel border border-terminal-border rounded p-4 space-y-3.5">
+      <div class="flex flex-wrap items-center justify-between gap-3 border-b border-terminal-border/60 pb-3">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+            <h2 class="text-sm font-semibold text-white tracking-tight">Portfolio Performance Tracker (30-Day Trajectory vs Benchmark)</h2>
+          </div>
+          <p class="text-xs text-terminal-textMuted mt-0.5">Real-time Mark-to-Market allocation simulated against MSCI World Benchmark (IWDA)</p>
+        </div>
+
+        <!-- Metric Stat Strip -->
+        <div class="flex items-center space-x-4 tnum text-xs">
+          <div>
+            <span class="text-terminal-textMuted">Portfolio 30D: </span>
+            <span id="chart-port-ret" class="text-emerald-400 font-medium">+0.00%</span>
+          </div>
+          <div>
+            <span class="text-terminal-textMuted">MSCI World 30D: </span>
+            <span id="chart-bench-ret" class="text-cyan-400 font-medium">+0.00%</span>
+          </div>
+          <div class="bg-terminal-bg px-2.5 py-1 rounded border border-terminal-border">
+            <span class="text-terminal-textMuted">Net Alpha: </span>
+            <span id="chart-alpha" class="text-emerald-400 font-bold">+0.00%</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chart Canvas Container -->
+      <div class="relative w-full h-[240px]">
+        <canvas id="portfolioChart"></canvas>
+      </div>
+
+      <!-- Asset Allocation Bar -->
+      <div class="border-t border-terminal-border/50 pt-2.5 space-y-1.5 text-xs">
+        <div class="flex items-center justify-between text-terminal-textMuted">
+          <span class="font-medium text-white">Current Target Allocation Breakdown</span>
+          <span id="allocation-legend" class="tnum text-[11px]">Deployable Capital Sizing</span>
+        </div>
+        <div id="allocation-bar" class="w-full h-3 rounded bg-terminal-bg overflow-hidden flex">
+          <!-- Dynamically populated allocation segments -->
+        </div>
+      </div>
+    </div>
+
+    <!-- CONTROLS & ACTION BAR -->
+    <div class="bg-terminal-panel border border-terminal-border rounded p-3.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+      <div class="flex flex-wrap items-center gap-4">
+        <!-- Mandate / Service Model Selector -->
+        <div class="flex items-center space-x-2">
+          <span class="text-terminal-textMuted">Service Model:</span>
+          <select id="model-select" class="bg-terminal-bg text-white font-medium focus:outline-none cursor-pointer px-2.5 py-1 rounded">
+            <option value="ADVISE" selected>Advise (Belfius Recommends, Client Decides)</option>
+            <option value="MANDATE">Mandate (Belfius Discretionary Management)</option>
+          </select>
+        </div>
+
+        <!-- Risk Mandate Selector -->
+        <div class="flex items-center space-x-2">
+          <span class="text-terminal-textMuted">Risk Mandate:</span>
+          <select id="risk-select" onchange="runRebalance()" class="bg-terminal-bg text-white font-medium focus:outline-none cursor-pointer px-2.5 py-1 rounded">
+            <option value="MODERATE" selected>Moderate (Balanced Alpha)</option>
+            <option value="CONSERVATIVE">Conservative (Capital Preservation)</option>
+            <option value="AGGRESSIVE">Aggressive (High Growth)</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-2.5">
+        <button onclick="runRebalance()" id="btn-rebalance" class="px-3.5 py-1.5 rounded bg-belfius hover:bg-belfius-hover text-white font-medium transition flex items-center space-x-1.5">
+          <i data-lucide="refresh-cw" class="w-3.5 h-3.5" id="rebalance-icon"></i>
+          <span>Re-Run Multi-Agent Allocation</span>
+        </button>
+
+        <button onclick="executeOrders()" id="btn-execute" class="px-3.5 py-1.5 rounded border border-emerald-600 bg-emerald-950/40 hover:bg-emerald-900/60 text-emerald-300 font-medium transition flex items-center space-x-1.5">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i>
+          <span>Execute Daily Orders</span>
+        </button>
+
+        <button onclick="resetPortfolio()" class="px-2.5 py-1.5 rounded border border-terminal-border hover:border-terminal-textMuted text-terminal-textMuted hover:text-white transition" title="Reset portfolio to initial €10,000 cash">
+          <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
+        </button>
+      </div>
+    </div>
+
+    <!-- TERMINAL TABS NAVIGATION -->
+    <div class="border-b border-terminal-border flex items-center space-x-1 text-xs overflow-x-auto">
+      <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-4 py-2.5 border-b-2 border-belfius text-white font-medium flex items-center space-x-2 transition whitespace-nowrap">
+        <i data-lucide="layers" class="w-3.5 h-3.5 text-belfius"></i>
+        <span>Active Recommended Orders (Top 5)</span>
+      </button>
+
+      <button onclick="switchTab('challenge')" id="tab-btn-challenge" class="px-4 py-2.5 border-b-2 border-transparent text-terminal-textMuted hover:text-white font-medium flex items-center space-x-2 transition whitespace-nowrap">
+        <i data-lucide="shuffle" class="w-3.5 h-3.5 text-rebel-lilac"></i>
+        <span>[C] Challenge / Runner-Ups (Ranks 6–10)</span>
+      </button>
+
+      <button onclick="switchTab('modify')" id="tab-btn-modify" class="px-4 py-2.5 border-b-2 border-transparent text-terminal-textMuted hover:text-white font-medium flex items-center space-x-2 transition whitespace-nowrap">
+        <i data-lucide="sliders" class="w-3.5 h-3.5 text-amber-400"></i>
+        <span>[M] Discretionary Modify</span>
+      </button>
+
+      <button onclick="switchTab('macro')" id="tab-btn-macro" class="px-4 py-2.5 border-b-2 border-transparent text-terminal-textMuted hover:text-white font-medium flex items-center space-x-2 transition whitespace-nowrap">
+        <i data-lucide="globe" class="w-3.5 h-3.5 text-cyan-400"></i>
+        <span>Macro Narrative & Central Banks</span>
+      </button>
+
+      <button onclick="switchTab('news')" id="tab-btn-news" class="px-4 py-2.5 border-b-2 border-transparent text-terminal-textMuted hover:text-white font-medium flex items-center space-x-2 transition whitespace-nowrap">
+        <i data-lucide="newspaper" class="w-3.5 h-3.5 text-emerald-400"></i>
+        <span>5-Day News Intelligence Stream</span>
+      </button>
+    </div>
+
+    <!-- TAB 1: ACTIVE RECOMMENDED ORDERS -->
+    <section id="tab-orders" class="space-y-4">
+      <div class="bg-terminal-panel border border-terminal-border rounded overflow-hidden">
+        <div class="p-4 border-b border-terminal-border flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 class="text-sm font-semibold text-white">Recommended Allocation (Max 5 Orders / Day)</h3>
+            <p class="text-xs text-terminal-textMuted">Optimized via Multi-Factor Conviction Model (60% ML Random Forest + 40% Macro Theme Tilt)</p>
+          </div>
+          <span class="px-2.5 py-1 rounded bg-belfius/10 text-belfius border border-belfius/30 text-xs font-medium" id="badge-theme">
+            Tactical Allocation
+          </span>
+        </div>
+
+        <div class="overflow-x-auto w-full">
+          <table class="w-full text-left text-xs min-w-[1100px]">
+            <thead class="bg-terminal-bg border-b border-terminal-border text-terminal-textMuted uppercase text-[10px] tracking-wider">
+              <tr>
+                <th class="py-3 px-3">Action</th>
+                <th class="py-3 px-3">Ticker</th>
+                <th class="py-3 px-3">ETF Name & ISIN</th>
+                <th class="py-3 px-3">Theme</th>
+                <th class="py-3 px-3 tnum">Target Weight</th>
+                <th class="py-3 px-3 tnum">Amount (EUR)</th>
+                <th class="py-3 px-3 tnum">Limit Price</th>
+                <th class="py-3 px-3 tnum has-tooltip">
+                  Conviction
+                  <span class="tooltip-content">Multi-factor conviction score combining technical win probability and macro tailwind.</span>
+                </th>
+                <th class="py-3 px-3">30D Price Trend</th>
+                <th class="py-3 px-3 min-w-[280px]">Investment Rationale & Economic Drivers</th>
+              </tr>
+            </thead>
+            <tbody id="orders-table-body" class="divide-y divide-terminal-border/60">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 2: [C] CHALLENGE / RUNNER-UPS -->
+    <section id="tab-challenge" class="space-y-4 hidden">
+      <div class="bg-terminal-panel border border-terminal-border rounded p-4 space-y-2">
+        <div class="flex items-center space-x-2">
+          <span class="px-2 py-0.5 rounded bg-rebel-lilac/20 text-rebel-lilac border border-rebel-lilac/30 text-[10px] font-bold">[C] Challenge Mandate</span>
+          <h3 class="text-sm font-semibold text-white">Sub-Optimal Runner-Up Candidates (Ranks 6 to 10)</h3>
+        </div>
+        <p class="text-xs text-terminal-textMuted leading-relaxed max-w-4xl">
+          In institutional advisory, clients often express skepticism or specific sector preferences. Below are the quantitative runner-up candidates that were viable but scored slightly below the top 5. 
+          Click <strong class="text-white">"Challenge & Swap"</strong> to substitute a top pick with that candidate and immediately re-audit portfolio risk limits.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="alternatives-container">
+        <!-- Dynamically populated alternative cards -->
+      </div>
+    </section>
+
+    <!-- TAB 3: [M] DISCRETIONARY MODIFY -->
+    <section id="tab-modify" class="space-y-4 hidden">
+      <div class="bg-terminal-panel border border-terminal-border rounded p-4 space-y-4">
+        <div>
+          <div class="flex items-center space-x-2">
+            <span class="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 text-[10px] font-bold">[M] Modify Framework</span>
+            <h3 class="text-sm font-semibold text-white">Discretionary Order Adjustment & Pre-Trade Risk Audit</h3>
+          </div>
+          <p class="text-xs text-terminal-textMuted mt-1">Adjust individual order weights to reflect client constraints. The risk engine will audit single-asset (&le;20%) and cash buffer (&ge;5%) in real time.</p>
+        </div>
+
+        <div id="modify-orders-list" class="space-y-3">
+          <!-- Dynamically populated sliders -->
+        </div>
+
+        <div class="border-t border-terminal-border pt-4 flex flex-wrap items-center justify-between gap-3">
+          <div class="text-xs text-terminal-textMuted">
+            Projected Total Weight: <strong id="modify-total-weight" class="text-white tnum">85.0%</strong> | Cash Reserve: <strong id="modify-cash-weight" class="text-emerald-400 tnum">15.0%</strong>
+          </div>
+          <button onclick="applyModifications()" class="px-4 py-2 rounded bg-belfius hover:bg-belfius-hover text-white text-xs font-medium transition flex items-center space-x-1.5">
+            <i data-lucide="check-check" class="w-3.5 h-3.5"></i>
+            <span>Validate & Apply Modified Allocation</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: MACRO NARRATIVE & CENTRAL BANKS -->
+    <section id="tab-macro" class="space-y-4 hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Natural Language Executive Memo (Prominent Full Width / 2 Cols) -->
+        <div class="bg-terminal-panel border border-terminal-border rounded p-4 space-y-3 lg:col-span-2">
+          <div class="flex items-center justify-between border-b border-terminal-border/60 pb-2">
+            <div class="flex items-center space-x-2">
+              <i data-lucide="file-text" class="w-4 h-4 text-belfius"></i>
+              <h3 class="text-sm font-semibold text-white">Executive Macro Briefing Memo</h3>
+            </div>
+            <span class="text-[11px] text-rebel-lilac font-medium">Boardroom Narrative Synthesis</span>
+          </div>
+          <div id="macro-exec-summary" class="text-xs text-terminal-textMuted leading-relaxed space-y-2 whitespace-pre-line">
+            Synthesizing global macroeconomic signals, monetary policy divergence, and tail risk indicators...
+          </div>
+        </div>
+
+        <!-- Transatlantic Policy & Market Rates -->
+        <div class="bg-terminal-panel border border-terminal-border rounded p-4 space-y-3.5">
+          <div class="text-xs text-terminal-textMuted uppercase tracking-wider font-medium border-b border-terminal-border/60 pb-2">
+            Central Bank Transmission Indicators
+          </div>
+          <div class="space-y-2.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-terminal-textMuted has-tooltip">
+                Fed Stance Score
+                <span class="tooltip-content">+1.0 = Highly Hawkish (Rate Hikes), -1.0 = Highly Dovish (Rate Cuts).</span>
+              </span>
+              <span id="macro-fed-score" class="font-medium tnum text-cyan-300">0.00</span>
+            </div>
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-terminal-textMuted has-tooltip">
+                ECB Stance Score
+                <span class="tooltip-content">+1.0 = Highly Hawkish, -1.0 = Highly Dovish.</span>
+              </span>
+              <span id="macro-ecb-score" class="font-medium tnum text-cyan-300">0.00</span>
+            </div>
+            <div class="flex justify-between items-center text-xs border-t border-terminal-border pt-2">
+              <span class="text-white font-medium has-tooltip">
+                Transatlantic Spread
+                <span class="tooltip-content">Monetary policy divergence (Fed &minus; ECB). Positive values favor USD assets; negative values favor European equities.</span>
+              </span>
+              <span id="macro-spread" class="font-bold tnum text-emerald-400">0.00</span>
+            </div>
+            <div class="flex justify-between items-center text-xs border-t border-terminal-border pt-2">
+              <span class="text-terminal-textMuted">Gold / Oil Ratio</span>
+              <span id="macro-goldoil" class="font-medium tnum text-amber-300">24.8x</span>
+            </div>
+            <div class="flex justify-between items-center text-xs">
+              <span class="text-terminal-textMuted">VIX Volatility Index</span>
+              <span id="macro-vix" class="font-medium tnum text-white">16.42</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: 5-DAY NEWS INTELLIGENCE STREAM -->
+    <section id="tab-news" class="space-y-4 hidden">
+      <div class="bg-terminal-panel border border-terminal-border rounded overflow-hidden">
+        <div class="p-4 border-b border-terminal-border flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 class="text-sm font-semibold text-white">5-Day LLM Headline News Intelligence Stream (Complete Ingestion)</h3>
+            <p class="text-xs text-terminal-textMuted">All collected global headlines categorized by thematic ETF exposure with economic transmission rationales</p>
+          </div>
+          <div class="flex items-center space-x-3">
+            <!-- Theme Filter Dropdown -->
+            <select id="news-theme-filter" onchange="filterHeadlines()" class="bg-terminal-bg text-white text-xs px-2.5 py-1.5 rounded border border-terminal-border focus:outline-none cursor-pointer">
+              <option value="ALL">All Categories & Themes</option>
+            </select>
+            <!-- Search Filter -->
+            <input type="text" id="news-search-input" oninput="filterHeadlines()" placeholder="Search headlines..." 
+              class="bg-terminal-bg text-white text-xs px-2.5 py-1.5 rounded border border-terminal-border focus:outline-none w-44">
+            <span class="text-xs text-rebel-lilac tnum font-medium" id="headline-count">Loading headlines...</span>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto w-full">
+          <table class="w-full text-left text-xs min-w-[950px]">
+            <thead class="bg-terminal-bg border-b border-terminal-border text-terminal-textMuted uppercase text-[10px] tracking-wider">
+              <tr>
+                <th class="py-3 px-3 w-28">Date</th>
+                <th class="py-3 px-3 w-40">Category / Theme</th>
+                <th class="py-3 px-3 w-28">Sentiment</th>
+                <th class="py-3 px-3">Headline Title</th>
+                <th class="py-3 px-3 w-32">Source</th>
+                <th class="py-3 px-3 min-w-[240px]">Economic Transmission Rationale</th>
+              </tr>
+            </thead>
+            <tbody id="headlines-table-body" class="divide-y divide-terminal-border/60">
+              <!-- Dynamically populated headline table rows -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 30-DAY HISTORICAL DATA POPUP MODAL -->
+  <div id="history-modal" class="fixed inset-0 z-50 flex items-center justify-center p-6 hidden">
+    <div class="fixed inset-0 bg-black/80 backdrop-blur-sm" onclick="closeHistoryModal()"></div>
+    <div class="relative bg-terminal-panel border border-belfius rounded max-w-2xl w-full max-h-[85vh] flex flex-col p-5 shadow-2xl space-y-4">
+      <div class="border-b border-terminal-border pb-3 flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-semibold text-white" id="modal-ticker-title">30-Day Historical Closing Prices</h3>
+          <p class="text-xs text-terminal-textMuted" id="modal-ticker-subtitle">Daily closing price history in EUR</p>
+        </div>
+        <button onclick="closeHistoryModal()" class="text-terminal-textMuted hover:text-white p-1">
+          <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+      </div>
+      <div class="overflow-y-auto flex-1 max-h-[50vh] pr-1">
+        <table class="w-full text-left text-xs">
+          <thead class="bg-terminal-bg text-terminal-textMuted uppercase text-[10px] border-b border-terminal-border">
+            <tr>
+              <th class="py-2.5 px-3">Trading Date</th>
+              <th class="py-2.5 px-3 tnum">Close Price (EUR)</th>
+              <th class="py-2.5 px-3 tnum">Daily Return</th>
+            </tr>
+          </thead>
+          <tbody id="modal-price-tbody" class="divide-y divide-terminal-border/40 tnum">
+            <!-- Populated on click -->
+          </tbody>
+        </table>
+      </div>
+      <div class="border-t border-terminal-border pt-3 flex justify-end">
+        <button onclick="closeHistoryModal()" class="px-4 py-2 rounded bg-terminal-bg border border-terminal-border text-white text-xs hover:border-terminal-textMuted transition">
+          Close Window
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- TOAST NOTIFICATION CONTAINER -->
+  <div id="toast" class="fixed bottom-5 right-5 bg-terminal-panel border border-belfius text-white px-4 py-3 rounded text-xs z-50 flex items-center space-x-3 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+    <i data-lucide="info" class="w-4 h-4 text-belfius" id="toast-icon"></i>
+    <span id="toast-message">Notification</span>
+  </div>
+
+  <!-- JAVASCRIPT LOGIC & CHART.JS ENGINE -->
+  <script>
+    let terminalState = {
+      nav: 10000.0,
+      cash: 10000.0,
+      selectedDate: "2026-11-20",
+      riskProfile: "MODERATE",
+      serviceModel: "ADVISE",
+      newbieMode: true,
+      orders: [],
+      alternatives: [],
+      headlines: [],
+      portfolioChart: null,
+      riskEval: null,
+      macroBriefing: null,
+    };
+
+    let chartInstance = null;
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      lucide.createIcons();
+      await fetchInitialState();
+      await runRebalance();
+    });
+
+    async function fetchInitialState() {
+      try {
+        const res = await fetch('/api/state');
+        const data = await res.json();
+        
+        terminalState.nav = data.current_nav;
+        terminalState.cash = data.cash_balance;
+
+        const dateSelect = document.getElementById('date-select');
+        dateSelect.innerHTML = '';
+        data.available_dates.forEach((d, idx) => {
+          const opt = document.createElement('option');
+          opt.value = d;
+          opt.textContent = d;
+          if (idx === 0) opt.selected = true;
+          dateSelect.appendChild(opt);
+        });
+        terminalState.selectedDate = data.available_dates[0] || "2026-11-20";
+
+        updateKpiDisplays();
+      } catch (err) {
+        showToast("Error loading initial market state: " + err.message, "error");
+      }
+    }
+
+    async function runRebalance() {
+      const icon = document.getElementById('rebalance-icon');
+      if (icon) icon.classList.add('animate-spin');
+
+      try {
+        terminalState.selectedDate = document.getElementById('date-select').value;
+        terminalState.riskProfile = document.getElementById('risk-select').value;
+
+        const res = await fetch('/api/rebalance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trading_date: terminalState.selectedDate,
+            risk_profile: terminalState.riskProfile
+          })
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+
+        terminalState.orders = data.orders || [];
+        terminalState.alternatives = data.alternative_candidates || [];
+        terminalState.riskEval = data.risk_evaluation;
+        terminalState.macroBriefing = data.macro_briefing;
+        terminalState.headlines = data.headlines || [];
+        terminalState.portfolioChart = data.portfolio_chart;
+
+        renderPortfolioChart();
+        renderAllocationBar();
+        renderOrdersTable();
+        renderAlternativesCards();
+        renderModifySliders();
+        renderMacroBriefing();
+        renderHeadlinesTable();
+        updateKpiDisplays();
+
+        showToast("Multi-Agent allocation refreshed for " + terminalState.selectedDate, "success");
+      } catch (err) {
+        showToast("Rebalance failed: " + err.message, "error");
+      } finally {
+        if (icon) icon.classList.remove('animate-spin');
+      }
+    }
+
+    // Chart.js Portfolio Tracker Renderer
+    function renderPortfolioChart() {
+      const pc = terminalState.portfolioChart;
+      if (!pc || !pc.dates || pc.dates.length === 0) return;
+
+      document.getElementById('chart-port-ret').textContent = `${pc.current_return_pct >= 0 ? '+' : ''}${pc.current_return_pct.toFixed(2)}%`;
+      document.getElementById('chart-bench-ret').textContent = `${pc.benchmark_return_pct >= 0 ? '+' : ''}${pc.benchmark_return_pct.toFixed(2)}%`;
+      const alphaElem = document.getElementById('chart-alpha');
+      alphaElem.textContent = `${pc.alpha_pct >= 0 ? '+' : ''}${pc.alpha_pct.toFixed(2)}%`;
+      alphaElem.className = pc.alpha_pct >= 0 ? "text-emerald-400 font-bold" : "text-rose-400 font-bold";
+
+      const ctx = document.getElementById('portfolioChart').getContext('2d');
+      if (chartInstance) {
+        chartInstance.destroy();
+      }
+
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: pc.dates,
+          datasets: [
+            {
+              label: 'ReBel Portfolio NAV (€)',
+              data: pc.portfolio_nav,
+              borderColor: '#B40036',
+              backgroundColor: 'rgba(180, 0, 54, 0.08)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.25,
+              pointRadius: 0,
+              pointHoverRadius: 4,
+              pointHoverBackgroundColor: '#FFFFFF',
+              pointHoverBorderColor: '#B40036',
+            },
+            {
+              label: 'MSCI World Benchmark (IWDA)',
+              data: pc.benchmark_nav,
+              borderColor: '#64748B',
+              borderWidth: 1.5,
+              borderDash: [4, 4],
+              fill: false,
+              tension: 0.25,
+              pointRadius: 0,
+              pointHoverRadius: 3,
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'index',
+            intersect: false,
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              align: 'end',
+              labels: {
+                color: '#8492A6',
+                font: { family: 'DM Sans', size: 11 },
+                boxWidth: 12,
+                boxHeight: 12,
+              }
+            },
+            tooltip: {
+              backgroundColor: '#0E121B',
+              borderColor: '#B40036',
+              borderWidth: 1,
+              titleColor: '#FFFFFF',
+              bodyColor: '#F8FAFC',
+              titleFont: { family: 'JetBrains Mono', size: 11 },
+              bodyFont: { family: 'DM Sans', size: 11 },
+              padding: 10,
+              callbacks: {
+                label: function(context) {
+                  return ` ${context.dataset.label}: €${context.parsed.y.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              grid: { color: 'rgba(26, 33, 48, 0.6)' },
+              ticks: { color: '#8492A6', font: { family: 'JetBrains Mono', size: 10 }, maxTicksLimit: 10 }
+            },
+            y: {
+              grid: { color: 'rgba(26, 33, 48, 0.6)' },
+              ticks: {
+                color: '#8492A6',
+                font: { family: 'JetBrains Mono', size: 10 },
+                callback: function(value) { return '€' + value.toLocaleString(); }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    // Render Asset Allocation Horizontal Progress Bar
+    function renderAllocationBar() {
+      const container = document.getElementById('allocation-bar');
+      container.innerHTML = '';
+
+      const colors = ['#B40036', '#C084FC', '#38BDF8', '#34D399', '#FBBF24'];
+      let allocatedWeight = 0;
+
+      terminalState.orders.forEach((o, idx) => {
+        const seg = document.createElement('div');
+        const color = colors[idx % colors.length];
+        seg.style.width = `${o.target_weight_pct}%`;
+        seg.style.backgroundColor = color;
+        seg.title = `${o.ticker}: ${o.target_weight_pct.toFixed(1)}%`;
+        container.appendChild(seg);
+        allocatedWeight += o.target_weight_pct;
+      });
+
+      const cashWeight = Math.max(0, 100 - allocatedWeight);
+      if (cashWeight > 0) {
+        const cashSeg = document.createElement('div');
+        cashSeg.style.width = `${cashWeight}%`;
+        cashSeg.style.backgroundColor = '#1E293B';
+        cashSeg.title = `Cash Reserve: ${cashWeight.toFixed(1)}%`;
+        container.appendChild(cashSeg);
+      }
+
+      document.getElementById('allocation-legend').innerHTML = `
+        Active: <strong class="text-white">${allocatedWeight.toFixed(1)}%</strong> | Cash: <strong class="text-emerald-400">${cashWeight.toFixed(1)}%</strong>
+      `;
+    }
+
+    // Render Orders Table with 30D Sparkline and Expandable Rationale
+    function renderOrdersTable() {
+      const tbody = document.getElementById('orders-table-body');
+      tbody.innerHTML = '';
+
+      terminalState.orders.forEach((o, idx) => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-terminal-panelHover transition border-b border-terminal-border/40 align-top";
+
+        // Generate SVG Sparkline
+        let sparklineSvg = '';
+        if (o.price_history_30d && o.price_history_30d.length > 1) {
+          const prices = o.price_history_30d.map(p => p.price);
+          const minP = Math.min(...prices);
+          const maxP = Math.max(...prices);
+          const range = Math.max(0.0001, maxP - minP);
+          const w = 70;
+          const h = 22;
+          const points = prices.map((p, i) => {
+            const x = (i / (prices.length - 1)) * w;
+            const y = h - ((p - minP) / range) * (h - 4) - 2;
+            return `${x.toFixed(1)},${y.toFixed(1)}`;
+          }).join(' ');
+          const lineColor = o.change_30d_pct >= 0 ? '#10B981' : '#F43F5E';
+          sparklineSvg = `
+            <svg width="${w}" height="${h}" class="inline-block overflow-visible">
+              <polyline fill="none" stroke="${lineColor}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" points="${points}" />
+            </svg>
+          `;
+        }
+
+        const chgClass = o.change_30d_pct >= 0 ? "text-emerald-400" : "text-rose-400";
+        const chgSign = o.change_30d_pct >= 0 ? "+" : "";
+
+        tr.innerHTML = `
+          <td class="py-3 px-3 font-semibold text-emerald-400 whitespace-nowrap">${o.action}</td>
+          <td class="py-3 px-3 font-mono font-medium text-white whitespace-nowrap">${o.ticker}</td>
+          <td class="py-3 px-3">
+            <div class="text-white font-medium break-words">${o.full_name}</div>
+            <div class="text-[10px] text-terminal-textMuted tnum">${o.isin}</div>
+          </td>
+          <td class="py-3 px-3 text-terminal-textMuted whitespace-nowrap">${o.theme}</td>
+          <td class="py-3 px-3 tnum font-medium text-white whitespace-nowrap">${o.target_weight_pct.toFixed(1)}%</td>
+          <td class="py-3 px-3 tnum font-medium text-white whitespace-nowrap">€${o.target_amount_eur.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+          <td class="py-3 px-3 tnum text-terminal-textMuted whitespace-nowrap">€${o.limit_price_eur.toFixed(4)}</td>
+          <td class="py-3 px-3 tnum font-semibold text-rebel-lilac whitespace-nowrap">${(o.conviction_score * 100).toFixed(1)}%</td>
+          <td class="py-3 px-3 whitespace-nowrap">
+            <div class="flex items-center space-x-2">
+              ${sparklineSvg}
+              <div class="flex flex-col text-right">
+                <span class="${chgClass} font-medium tnum text-[11px]">${chgSign}${o.change_30d_pct.toFixed(2)}%</span>
+                <button onclick="openHistoryModal(${idx})" class="text-[10px] text-rebel-lilac hover:text-white underline cursor-pointer">View 30D</button>
+              </div>
+            </div>
+          </td>
+          <td class="py-3 px-3">
+            <div class="text-xs text-terminal-textMuted max-h-24 overflow-y-auto pr-1 leading-relaxed break-words whitespace-normal border-l-2 border-belfius/40 pl-2">
+              ${o.thesis_memo}
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    // Open Historical 30D Data Modal
+    function openHistoryModal(orderIdx) {
+      const order = terminalState.orders[orderIdx];
+      if (!order || !order.price_history_30d) return;
+
+      document.getElementById('modal-ticker-title').textContent = `${order.ticker} — 30-Day Closing Prices`;
+      document.getElementById('modal-ticker-subtitle').textContent = `${order.full_name} (${order.isin}) | 30-Day Trend: ${order.change_30d_pct >= 0 ? '+' : ''}${order.change_30d_pct.toFixed(2)}%`;
+
+      const tbody = document.getElementById('modal-price-tbody');
+      tbody.innerHTML = '';
+
+      const prices = order.price_history_30d;
+      for (let i = prices.length - 1; i >= 0; i--) {
+        const item = prices[i];
+        let dailyRet = 0.0;
+        if (i > 0) {
+          const prev = prices[i - 1].price;
+          dailyRet = ((item.price - prev) / prev) * 100;
+        }
+
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-terminal-bg/70";
+        const retClass = dailyRet >= 0 ? "text-emerald-400" : "text-rose-400";
+        tr.innerHTML = `
+          <td class="py-2 px-3 text-white font-mono">${item.date}</td>
+          <td class="py-2 px-3 text-white font-mono">€${item.price.toFixed(4)}</td>
+          <td class="py-2 px-3 ${retClass} font-mono">${dailyRet >= 0 ? '+' : ''}${dailyRet.toFixed(2)}%</td>
+        `;
+        tbody.appendChild(tr);
+      }
+
+      document.getElementById('history-modal').classList.remove('hidden');
+    }
+
+    function closeHistoryModal() {
+      document.getElementById('history-modal').classList.add('hidden');
+    }
+
+    // Render Alternatives (Challenge) Cards
+    function renderAlternativesCards() {
+      const container = document.getElementById('alternatives-container');
+      container.innerHTML = '';
+
+      if (terminalState.alternatives.length === 0) {
+        container.innerHTML = `<div class="p-4 text-terminal-textMuted text-xs col-span-2">No runner-up candidates generated for this regime.</div>`;
+        return;
+      }
+
+      terminalState.alternatives.forEach((a, idx) => {
+        const rank = idx + 6;
+        const card = document.createElement('div');
+        card.className = "bg-terminal-panel border border-terminal-border rounded p-4 space-y-3 hover:border-rebel-lilac/60 transition";
+        card.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2">
+              <span class="px-2 py-0.5 rounded bg-terminal-bg border border-terminal-border text-terminal-textMuted text-[10px] font-mono">Rank #${rank}</span>
+              <span class="text-white font-semibold font-mono text-xs">${a.ticker}</span>
+              <span class="text-rebel-lilac text-xs truncate max-w-[200px]">${a.full_name}</span>
+            </div>
+            <span class="text-[10px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">${a.momentum_label}</span>
+          </div>
+
+          <div class="grid grid-cols-3 gap-2 text-[11px] tnum pt-2 border-t border-terminal-border/50">
+            <div>
+              <div class="text-terminal-textMuted text-[10px]">RF Win Prob</div>
+              <div class="text-white font-medium">${(a.rf_win_prob * 100).toFixed(1)}%</div>
+            </div>
+            <div>
+              <div class="text-terminal-textMuted text-[10px]">Macro Tilt</div>
+              <div class="text-emerald-400 font-medium">${a.theme_macro_tilt >= 0 ? '+' : ''}${a.theme_macro_tilt.toFixed(2)}</div>
+            </div>
+            <div>
+              <div class="text-terminal-textMuted text-[10px]">Conviction</div>
+              <div class="text-rebel-lilac font-medium">${(a.conviction_score * 100).toFixed(1)}%</div>
+            </div>
+          </div>
+
+          <div class="text-xs text-terminal-textMuted leading-relaxed break-words">
+            <strong class="text-white">Quantitative Evidence:</strong> ${a.trade_off_evidence}
+          </div>
+
+          <div class="pt-2 flex items-center justify-end">
+            <button onclick="challengeSwap('${a.ticker}')" class="px-3 py-1.5 rounded border border-belfius bg-belfius/10 hover:bg-belfius text-white text-xs font-medium transition flex items-center space-x-1.5">
+              <i data-lucide="shuffle" class="w-3.5 h-3.5"></i>
+              <span>[C] Challenge Top-5: Swap ${a.ticker} In</span>
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+      lucide.createIcons();
+    }
+
+    async function challengeSwap(candidateTicker) {
+      if (terminalState.orders.length === 0) return;
+      const sorted = [...terminalState.orders].sort((a, b) => a.conviction_score - b.conviction_score);
+      const lowest = sorted[0];
+
+      try {
+        const res = await fetch('/api/swap', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            remove_ticker: lowest.ticker,
+            add_ticker: candidateTicker,
+            current_orders: terminalState.orders,
+            trading_date: terminalState.selectedDate,
+            risk_profile: terminalState.riskProfile
+          })
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+        terminalState.orders = data.orders;
+        terminalState.riskEval = data.risk_evaluation;
+
+        renderOrdersTable();
+        renderAllocationBar();
+        renderModifySliders();
+        updateKpiDisplays();
+        switchTab('orders');
+
+        showToast(`[C] Challenge applied: Swapped ${lowest.ticker} with ${candidateTicker}. Pre-trade risk verified.`, "success");
+      } catch (err) {
+        showToast("Challenge swap failed: " + err.message, "error");
+      }
+    }
+
+    function renderModifySliders() {
+      const list = document.getElementById('modify-orders-list');
+      list.innerHTML = '';
+
+      terminalState.orders.forEach((o, idx) => {
+        const row = document.createElement('div');
+        row.className = "flex items-center space-x-4 py-2.5 border-b border-terminal-border/40 text-xs";
+        row.innerHTML = `
+          <div class="w-24 font-mono font-medium text-white">${o.ticker}</div>
+          <div class="w-48 text-terminal-textMuted truncate">${o.full_name}</div>
+          <div class="flex-1 flex items-center space-x-3">
+            <input type="range" min="5" max="20" step="1" value="${Math.round(o.target_weight_pct)}" 
+              id="slider-${idx}" oninput="onWeightSliderChange()" class="flex-1 accent-belfius cursor-pointer">
+            <span class="w-12 text-right tnum font-semibold text-white" id="val-${idx}">${Math.round(o.target_weight_pct)}%</span>
+          </div>
+        `;
+        list.appendChild(row);
+      });
+      onWeightSliderChange();
+    }
+
+    function onWeightSliderChange() {
+      let total = 0;
+      terminalState.orders.forEach((o, idx) => {
+        const slider = document.getElementById(`slider-${idx}`);
+        const valSpan = document.getElementById(`val-${idx}`);
+        if (slider && valSpan) {
+          const val = parseFloat(slider.value);
+          valSpan.textContent = `${val.toFixed(0)}%`;
+          total += val;
+        }
+      });
+
+      const cash = Math.max(0, 100 - total);
+      document.getElementById('modify-total-weight').textContent = `${total.toFixed(1)}%`;
+      const cashSpan = document.getElementById('modify-cash-weight');
+      cashSpan.textContent = `${cash.toFixed(1)}%`;
+
+      if (cash < 5.0) {
+        cashSpan.className = "text-rose-500 tnum font-bold";
+      } else {
+        cashSpan.className = "text-emerald-400 tnum font-bold";
+      }
+    }
+
+    function applyModifications() {
+      let total = 0;
+      terminalState.orders.forEach((o, idx) => {
+        const slider = document.getElementById(`slider-${idx}`);
+        if (slider) {
+          const w = parseFloat(slider.value);
+          o.target_weight_pct = w;
+          o.target_amount_eur = Math.round(terminalState.nav * (w / 100.0) * 100) / 100;
+          total += w;
+        }
+      });
+
+      const cash = 100 - total;
+      if (cash < 5.0) {
+        showToast("Risk violation: Cash buffer would drop below 5.0% mandate limit!", "error");
+        return;
+      }
+
+      renderOrdersTable();
+      renderAllocationBar();
+      updateKpiDisplays();
+      switchTab('orders');
+      showToast("Discretionary weights applied and re-audited.", "success");
+    }
+
+    function renderMacroBriefing() {
+      const mb = terminalState.macroBriefing;
+      if (!mb) return;
+
+      document.getElementById('macro-fed-score').textContent = (mb.fed_hawkish_dovish_score >= 0 ? '+' : '') + mb.fed_hawkish_dovish_score.toFixed(2);
+      document.getElementById('macro-ecb-score').textContent = (mb.ecb_hawkish_dovish_score >= 0 ? '+' : '') + mb.ecb_hawkish_dovish_score.toFixed(2);
+      document.getElementById('macro-spread').textContent = (mb.transatlantic_policy_spread >= 0 ? '+' : '') + mb.transatlantic_policy_spread.toFixed(2);
+      document.getElementById('macro-vix').textContent = mb.vix_level.toFixed(2);
+      document.getElementById('macro-goldoil').textContent = mb.gold_oil_ratio.toFixed(1) + 'x';
+      
+      // Natural language executive narrative
+      document.getElementById('macro-exec-summary').textContent = mb.executive_summary;
+
+      document.getElementById('ticker-vix').textContent = mb.vix_level.toFixed(2);
+      document.getElementById('ticker-goldoil').textContent = mb.gold_oil_ratio.toFixed(1) + 'x';
+      document.getElementById('ticker-regime').textContent = mb.regime;
+    }
+
+    // Render ALL Headlines in Full Table with Category / Theme Tagging & Client-side Filter
+    function renderHeadlinesTable() {
+      // Populate unique categories into filter dropdown
+      const themeSelect = document.getElementById('news-theme-filter');
+      const uniqueThemes = new Set();
+      terminalState.headlines.forEach(h => {
+        if (h.category_theme) {
+          h.category_theme.split(',').forEach(t => uniqueThemes.add(t.trim()));
+        }
+      });
+
+      themeSelect.innerHTML = '<option value="ALL">All Categories & Themes</option>';
+      Array.from(uniqueThemes).sort().forEach(t => {
+        if (t) {
+          const opt = document.createElement('option');
+          opt.value = t;
+          opt.textContent = t;
+          themeSelect.appendChild(opt);
+        }
+      });
+
+      filterHeadlines();
+    }
+
+    function filterHeadlines() {
+      const filterTheme = document.getElementById('news-theme-filter').value;
+      const query = document.getElementById('news-search-input').value.toLowerCase().trim();
+
+      const filtered = terminalState.headlines.filter(h => {
+        const matchesTheme = (filterTheme === "ALL") || (h.category_theme && h.category_theme.includes(filterTheme));
+        const matchesQuery = !query || h.title.toLowerCase().includes(query) || (h.category_theme && h.category_theme.toLowerCase().includes(query));
+        return matchesTheme && matchesQuery;
+      });
+
+      document.getElementById('headline-count').textContent = `${filtered.length} of ${terminalState.headlines.length} Headlines`;
+
+      const tbody = document.getElementById('headlines-table-body');
+      tbody.innerHTML = '';
+
+      filtered.forEach(h => {
+        const tr = document.createElement('tr');
+        tr.className = "hover:bg-terminal-panelHover transition border-b border-terminal-border/40 text-xs";
+
+        let sentBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-terminal-bg text-terminal-textMuted border border-terminal-border">NEUTRAL</span>`;
+        if (h.sentiment === "POSITIVE") {
+          sentBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-950 text-emerald-400 border border-emerald-800">POSITIVE (+${h.score.toFixed(2)})</span>`;
+        } else if (h.sentiment === "NEGATIVE") {
+          sentBadge = `<span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-950 text-rose-400 border border-rose-800">NEGATIVE (${h.score.toFixed(2)})</span>`;
+        }
+
+        tr.innerHTML = `
+          <td class="py-2.5 px-3 text-terminal-textMuted font-mono whitespace-nowrap">${h.date}</td>
+          <td class="py-2.5 px-3 whitespace-nowrap">
+            <span class="px-2 py-0.5 rounded text-[10px] bg-belfius/15 text-rebel-lilac border border-belfius/30 font-medium">
+              ${h.category_theme}
+            </span>
+          </td>
+          <td class="py-2.5 px-3 whitespace-nowrap">${sentBadge}</td>
+          <td class="py-2.5 px-3 text-white font-medium break-words">${h.title}</td>
+          <td class="py-2.5 px-3 text-terminal-textMuted whitespace-nowrap">${h.source}</td>
+          <td class="py-2.5 px-3 text-terminal-textMuted break-words text-[11px] leading-relaxed">${h.economic_rationale}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function updateKpiDisplays() {
+      document.getElementById('kpi-nav').textContent = `€${terminalState.nav.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      const ret = ((terminalState.nav - 10000.0) / 10000.0) * 100;
+      const retElem = document.getElementById('kpi-return');
+      retElem.textContent = `${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%`;
+      retElem.className = ret >= 0 ? "text-2xl font-light tnum text-emerald-400" : "text-2xl font-light tnum text-rose-500";
+
+      let allocated = terminalState.orders.reduce((sum, o) => sum + o.target_weight_pct, 0);
+      let cashPct = Math.max(0, 100 - allocated);
+      let cashVal = terminalState.nav * (cashPct / 100.0);
+      document.getElementById('kpi-cash').innerHTML = `€${cashVal.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="text-xs text-rebel-lilac font-normal">(${cashPct.toFixed(1)}%)</span>`;
+
+      if (terminalState.riskEval) {
+        document.getElementById('kpi-var').textContent = `${terminalState.riskEval.var_95_daily_pct.toFixed(2)}%`;
+        const gateElem = document.getElementById('kpi-gate');
+        if (terminalState.riskEval.passed) {
+          gateElem.innerHTML = `<span class="text-emerald-400">PASSED</span>`;
+        } else {
+          gateElem.innerHTML = `<span class="text-rose-500">WARNING</span>`;
+        }
+      }
+    }
+
+    async function executeOrders() {
+      if (terminalState.orders.length === 0) {
+        showToast("No orders available to execute.", "error");
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/execute', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            trading_date: terminalState.selectedDate,
+            orders: terminalState.orders,
+            risk_profile: terminalState.riskProfile
+          })
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+        const data = await res.json();
+
+        terminalState.nav = data.nav;
+        terminalState.cash = data.cash_balance;
+        updateKpiDisplays();
+
+        showToast(data.message + " NAV updated immediately.", "success");
+      } catch (err) {
+        showToast("Execution failed: " + err.message, "error");
+      }
+    }
+
+    async function resetPortfolio() {
+      try {
+        const res = await fetch('/api/reset', { method: 'POST' });
+        const data = await res.json();
+        terminalState.nav = data.nav;
+        terminalState.cash = data.cash_balance;
+        updateKpiDisplays();
+        showToast("Portfolio reset to initial €10,000 cash balance.", "success");
+      } catch (err) {
+        showToast("Reset failed: " + err.message, "error");
+      }
+    }
+
+    function switchTab(tabId) {
+      const tabs = ['orders', 'challenge', 'modify', 'macro', 'news'];
+      tabs.forEach(t => {
+        const section = document.getElementById(`tab-${t}`);
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tabId) {
+          section.classList.remove('hidden');
+          btn.className = "px-4 py-2.5 border-b-2 border-belfius text-white font-medium flex items-center space-x-2 transition whitespace-nowrap";
+        } else {
+          section.classList.add('hidden');
+          btn.className = "px-4 py-2.5 border-b-2 border-transparent text-terminal-textMuted hover:text-white font-medium flex items-center space-x-2 transition whitespace-nowrap";
+        }
+      });
+      lucide.createIcons();
+    }
+
+    function toggleNewbieMode() {
+      terminalState.newbieMode = !terminalState.newbieMode;
+      const status = document.getElementById('newbie-status');
+      const banner = document.getElementById('newbie-banner');
+      status.textContent = terminalState.newbieMode ? "ON" : "OFF";
+      if (terminalState.newbieMode) {
+        banner.classList.remove('hidden');
+      } else {
+        banner.classList.add('hidden');
+      }
+    }
+
+    function dismissNewbieBanner() {
+      document.getElementById('newbie-banner').classList.add('hidden');
+    }
+
+    function onDateChanged() {
+      runRebalance();
+    }
+
+    function showToast(message, type = "info") {
+      const toast = document.getElementById('toast');
+      const msgElem = document.getElementById('toast-message');
+      const icon = document.getElementById('toast-icon');
+
+      msgElem.textContent = message;
+      if (type === "error") {
+        toast.className = "fixed bottom-5 right-5 bg-terminal-panel border border-rose-500 text-rose-200 px-4 py-3 rounded text-xs z-50 flex items-center space-x-3 transform translate-y-0 opacity-100 transition-all duration-300";
+      } else {
+        toast.className = "fixed bottom-5 right-5 bg-terminal-panel border border-belfius text-white px-4 py-3 rounded text-xs z-50 flex items-center space-x-3 transform translate-y-0 opacity-100 transition-all duration-300";
+      }
+
+      setTimeout(() => {
+        toast.className = "fixed bottom-5 right-5 bg-terminal-panel border border-belfius text-white px-4 py-3 rounded text-xs z-50 flex items-center space-x-3 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none";
+      }, 4000);
+    }
+  </script>
+</body>
+</html>

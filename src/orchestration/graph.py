@@ -10,58 +10,74 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from src.orchestration.state import AgentState, PortfolioProposal, OrderItem
 from src.orchestration.logger import log_event
-from src.agents.technical import evaluate_all_etfs
+from src.agents.technical import evaluate_all_etfs, retrain_if_new_data
 from src.agents.risk import RiskManager
 from src.agents.macro import evaluate_macro_agent
 from src.agents.portfolio import PortfolioManagerAgent
 from src.agents.human_loop import HumanInTheLoopAgent
+from src.pipeline.portfolio_ledger import PortfolioLedger
 from src.pipeline.etf_universe import ETF_UNIVERSE
 
 load_dotenv()
 risk_engine = RiskManager()
+ledger = PortfolioLedger()
 portfolio_engine = PortfolioManagerAgent(risk_manager=risk_engine)
-hitl_engine = HumanInTheLoopAgent(risk_manager=risk_engine)
+hitl_engine = HumanInTheLoopAgent(risk_manager=risk_engine, ledger=ledger)
 
 # ==========================================
 # 1. NODE IMPLEMENTATIONS (IN EXACT ORDER)
 # ==========================================
 
 def data_node(state: AgentState) -> Dict[str, Any]:
-    """Node 1: Loads latest EUR closing prices for all 50 ETFs."""
+    """Node 1: Loads latest EUR closing prices for all 50 ETFs and updates Mark-to-Market NAV."""
     price_file = "data/etf_prices_eur.parquet"
     if os.path.exists(price_file):
         df = pd.read_parquet(price_file)
         latest_prices = {col: float(df[col].dropna().iloc[-1]) for col in df.columns}
         trade_date = str(df.index[-1].date())
     else:
-        # Fallback synthetic prices if file not yet run
         latest_prices = {etf.ticker: 100.0 for etf in ETF_UNIVERSE}
         trade_date = "2026-11-13"
+
+    # Mark to market current portfolio positions
+    current_nav = ledger.mark_to_market(latest_prices)
+    active_capital = current_nav if current_nav > 0 else state.get("starting_capital_eur", 10000.0)
 
     log_event(
         event_type="DATA_INGESTION",
         node_name="data_node",
-        payload={"date": trade_date, "etf_count": len(latest_prices)}
+        payload={"date": trade_date, "etf_count": len(latest_prices), "nav": current_nav}
     )
     return {
         "trading_date": trade_date,
         "prices": latest_prices,
+        "portfolio_nav": current_nav,
+        "starting_capital_eur": active_capital,
         "execution_status": "DATA_LOADED"
     }
 
 def technical_node(state: AgentState) -> Dict[str, Any]:
-    """Node 2: Generates technical scores, RSI, trend, and breakout signals."""
+    """Node 2: Auto-updates Random Forest model if fresh data exists, then generates signals."""
     price_file = "data/etf_prices_eur.parquet"
     df = pd.read_parquet(price_file)
+
+    # 1. Self-updating ML: Auto-retrain if fresh prices detected
+    retrained, ml_msg, _ = retrain_if_new_data(df, force=False)
+    if retrained:
+        log_event(
+            event_type="MODEL_RETRAINED",
+            node_name="technical_node",
+            payload={"message": ml_msg}
+        )
+
+    # 2. Compute signals across 50 ETFs
     signals = evaluate_all_etfs(df)
-    
-    # Convert Pydantic signals to dict for state serialization
     signal_dict = {ticker: sig.model_dump() for ticker, sig in signals.items()}
     
     log_event(
         event_type="TECHNICAL_ANALYSIS",
         node_name="technical_node",
-        payload={"ranked_count": len(signal_dict)}
+        payload={"ranked_count": len(signal_dict), "ml_status": ml_msg}
     )
     return {
         "tech_signals": signal_dict,
@@ -97,6 +113,21 @@ def macro_node(state: AgentState) -> Dict[str, Any]:
             "tail_risks": briefing_obj.tail_risk_alerts
         }
     )
+    # Optional Trigger: Export all collected headlines as-is to CSV if enabled (default: False)
+    export_trigger = state.get("export_headlines_csv", False)
+    if export_trigger:
+        try:
+            from src.pipeline.headline_audit import export_headlines_csv
+            csv_path = str(export_trigger) if isinstance(export_trigger, str) else "data/headlines_collected.csv"
+            saved_csv = export_headlines_csv(output_path=csv_path)
+            log_event(
+                event_type="HEADLINES_EXPORTED",
+                node_name="macro_node",
+                payload={"csv_path": saved_csv}
+            )
+        except Exception as e:
+            print(f"Notice during headline CSV export: {e}")
+
     return {
         "macro_briefing": briefing_obj.executive_summary,
         "agent_limit_notification": briefing_obj.agent_limit_notification,
@@ -104,8 +135,11 @@ def macro_node(state: AgentState) -> Dict[str, Any]:
     }
 
 def risk_node(state: AgentState) -> Dict[str, Any]:
-    """Node 4: Sets hard risk boundaries before portfolio construction."""
+    """Node 4: Configures risk guardrails based on state risk_profile."""
+    risk_profile = state.get("risk_profile", "MODERATE").upper()
+    risk_engine.set_risk_profile(risk_profile)
     constraints = {
+        "risk_profile": risk_profile,
         "max_single_weight": risk_engine.max_single_weight,
         "max_leveraged_total": risk_engine.max_leveraged_total,
         "max_single_leveraged": risk_engine.max_single_leveraged,
@@ -125,11 +159,13 @@ def risk_node(state: AgentState) -> Dict[str, Any]:
     }
 
 def portfolio_manager_node(state: AgentState) -> Dict[str, Any]:
-    """Node 5: Constructs high-conviction orders + memo via PortfolioManagerAgent."""
+    """Node 5: Constructs high-conviction orders + memo with profile & argument adaptation."""
     tech_signals = state["tech_signals"]
     capital = state.get("starting_capital_eur", 10000.0)
     trade_date = state.get("trading_date", "2026-11-18")
     ref_date = state.get("reference_date", None)
+    risk_profile = state.get("risk_profile", "MODERATE")
+    user_args = state.get("user_arguments", None)
     
     # Retrieve structured macro briefing
     macro_briefing_obj = evaluate_macro_agent(trading_date=trade_date, reference_date=ref_date)
@@ -138,7 +174,10 @@ def portfolio_manager_node(state: AgentState) -> Dict[str, Any]:
         trading_date=trade_date,
         tech_signals=tech_signals,
         macro_briefing=macro_briefing_obj,
-        starting_capital_eur=capital
+        starting_capital_eur=capital,
+        risk_profile=risk_profile,
+        user_arguments=user_args,
+        current_holdings=ledger.positions
     )
     
     orders_dict = [o.model_dump() for o in proposal.orders]
@@ -149,6 +188,7 @@ def portfolio_manager_node(state: AgentState) -> Dict[str, Any]:
         payload={
             "orders": orders_dict,
             "is_risk_approved": risk_eval.is_approved,
+            "risk_profile": risk_profile,
             "memo": proposal.executive_memo
         }
     )
@@ -160,32 +200,21 @@ def portfolio_manager_node(state: AgentState) -> Dict[str, Any]:
     }
 
 def human_approval_node(state: AgentState) -> Dict[str, Any]:
-    """Node 6: Interactive Human-in-the-Loop decision & audit checkpoint via HumanInTheLoopAgent."""
+    """Node 6: Interactive Review / Mandate Execution & Portfolio Ledger Accounting."""
     decision_obj = hitl_engine.review_and_decide(state)
+    
+    # Retrieve latest ledger summary
+    summary = ledger.get_summary_report()
+
     return {
         "human_approved": decision_obj.human_approved,
         "human_decision": decision_obj.decision,
         "human_notes": decision_obj.notes,
         "final_orders": decision_obj.final_orders,
         "risk_evaluation": decision_obj.risk_evaluation,
-        "execution_status": "COMPLETED"
-    }
-
-    log_event(
-        event_type="HUMAN_IN_THE_LOOP_DECISION",
-        node_name="human_approval_node",
-        payload={
-            "decision": status,
-            "notes": notes,
-            "final_orders_count": len(final_orders)
-        }
-    )
-
-    return {
-        "human_approved": (decision == "A"),
-        "human_decision": status,
-        "human_notes": notes,
-        "final_orders": final_orders,
+        "portfolio_nav": summary["current_nav"],
+        "period_pnl": summary["total_cumulative_pnl"],
+        "ledger_summary": summary,
         "execution_status": "COMPLETED"
     }
 
@@ -223,6 +252,9 @@ if __name__ == "__main__":
     initial_state = {
         "trading_date": "2026-11-13",
         "starting_capital_eur": 10000.0,
+        "risk_profile": "MODERATE",
+        "service_model": "MANDATE",
+        "user_arguments": None,
         "prices": {},
         "tech_signals": {},
         "macro_briefing": "",
@@ -234,10 +266,13 @@ if __name__ == "__main__":
         "human_decision": "",
         "human_notes": "",
         "final_orders": [],
+        "portfolio_nav": None,
+        "period_pnl": None,
+        "ledger_summary": None,
         "execution_status": "INIT"
     }
     
     # Run graph with session config
     config = {"configurable": {"thread_id": "qdc-trading-session-1"}}
     final_output = app.invoke(initial_state, config=config)
-    print("\n🏁 Pipeline execution completed with status:", final_output["execution_status"])
+    print("\nPipeline execution completed with status:", final_output["execution_status"])

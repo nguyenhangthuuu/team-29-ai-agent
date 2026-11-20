@@ -70,10 +70,15 @@ LM_POSITIVE = {
 LM_NEGATIVE = {
     "deficit", "decline", "deterioration", "loss", "losses", "default", 
     "distress", "adverse", "recessionary", "vulnerability", "shock", "shocks",
-    "slump", "plunge", "crisis", "tumble", "drop", "bearish", "crash", "fear"
+    "slump", "plunge", "crisis", "tumble", "drop", "drops", "dropped", "bearish", "crash", "fear",
+    "lower", "fall", "falls", "fell", "sink", "sinks", "sank", "selloff", "sell-off",
+    "slide", "slides", "slid", "retreat", "retreats", "tariff", "tariffs", "war"
 }
 
-NEGATION_WORDS = {"not", "no", "never", "hardly", "scarcely", "without", "little"}
+NEGATION_WORDS = {
+    "not", "no", "never", "hardly", "scarcely", "without", "little",
+    "fail", "fails", "failed", "failing", "failure", "unable", "lack", "lacks", "lacking"
+}
 
 def analyze_central_bank_text(text: str) -> Dict[str, float]:
     """
@@ -411,36 +416,43 @@ def fetch_live_headlines(reference_date: Optional[str] = None) -> Tuple[List[Dic
 
     raw_headlines: List[Dict[str, Any]] = []
 
-    # --- SOURCE A: Google News RSS (Macroeconomic & Central Bank Focus) ---
-    try:
-        macro_query = urllib.parse.quote("economy inflation Federal Reserve ECB interest rates tariffs")
-        url_a = f"https://news.google.com/rss/search?q={macro_query}&hl=en-US&gl=US&ceid=US:en"
-        req_a = urllib.request.Request(url_a, headers=headers)
-        with urllib.request.urlopen(req_a, timeout=6) as resp_a:
-            soup_a = BeautifulSoup(resp_a.read(), "xml")
-            for item in soup_a.find_all("item")[:30]:
-                title = item.title.text.strip() if item.title else ""
-                pub_str = item.pubDate.text if item.pubDate else ""
-                try:
-                    dt = email.utils.parsedate_to_datetime(pub_str)
-                except Exception:
-                    dt = now
-                if dt >= ref_dt and dt <= now + timedelta(hours=2):
-                    raw_headlines.append({
-                        "source": "Source A: Google News RSS",
-                        "title": title,
-                        "dt": dt,
-                        "pub_date": dt.isoformat()
-                    })
-    except Exception as e:
-        print(f"Source A (Google News) notice: {e}")
+    # --- SOURCE A: Google News RSS (Multi-Topic Macro & Central Bank Streams) ---
+    macro_queries = [
+        ("Source A: Google News (Monetary Policy)", "Federal Reserve OR ECB OR interest rates OR rate cuts"),
+        ("Source A: Google News (Macro & Inflation)", "economy inflation OR GDP OR recession OR jobs report"),
+        ("Source A: Google News (Geopolitics & Energy)", "tariffs OR trade war OR OPEC oil OR sanctions OR energy"),
+        ("Source A: Google News (Markets & Equities)", "stock market OR Wall Street OR European stocks OR tech earnings OR AI chips")
+    ]
+    for src_label, q in macro_queries:
+        try:
+            encoded_q = urllib.parse.quote(q)
+            url_a = f"https://news.google.com/rss/search?q={encoded_q}&hl=en-US&gl=US&ceid=US:en"
+            req_a = urllib.request.Request(url_a, headers=headers)
+            with urllib.request.urlopen(req_a, timeout=6) as resp_a:
+                soup_a = BeautifulSoup(resp_a.read(), "xml")
+                for item in soup_a.find_all("item")[:40]:
+                    title = item.title.text.strip() if item.title else ""
+                    pub_str = item.pubDate.text if item.pubDate else ""
+                    try:
+                        dt = email.utils.parsedate_to_datetime(pub_str)
+                    except Exception:
+                        dt = now
+                    if dt >= ref_dt and dt <= now + timedelta(hours=2):
+                        raw_headlines.append({
+                            "source": src_label,
+                            "title": title,
+                            "dt": dt,
+                            "pub_date": dt.isoformat()
+                        })
+        except Exception as e:
+            pass
 
-    # --- SOURCE B: Yahoo Finance News Stream (Core Representative ETF Tickers) ---
-    rep_tickers = ["SPY", "QQQ", "CSX5.L", "GLD", "BZ=F", "^VIX"]
+    # --- SOURCE B: Yahoo Finance News Stream (12 Sector Anchor ETF Tickers) ---
+    rep_tickers = ["SPY", "QQQ", "CSX5.L", "SMH", "GLD", "BZ=F", "XLE", "URA", "XLF", "EEM", "INDA", "^VIX"]
     for sym in rep_tickers:
         try:
             t = yf.Ticker(sym)
-            for n in (t.news or [])[:6]:
+            for n in (t.news or [])[:8]:
                 title = n.get("content", {}).get("title") or n.get("title")
                 pub_str = n.get("content", {}).get("pubDate") or n.get("pubDate")
                 if not title:
@@ -459,28 +471,32 @@ def fetch_live_headlines(reference_date: Optional[str] = None) -> Tuple[List[Dic
         except Exception:
             continue
 
-    # --- SOURCE C: Curated Financial Media RSS (CNBC Economy) ---
-    try:
-        url_c = "https://www.cnbc.com/id/20910258/device/rss/rss.html"
-        req_c = urllib.request.Request(url_c, headers=headers)
-        with urllib.request.urlopen(req_c, timeout=6) as resp_c:
-            soup_c = BeautifulSoup(resp_c.read(), "xml")
-            for item in soup_c.find_all("item")[:25]:
-                title = item.title.text.strip() if item.title else ""
-                pub_str = item.pubDate.text if item.pubDate else ""
-                try:
-                    dt = email.utils.parsedate_to_datetime(pub_str)
-                except Exception:
-                    dt = now
-                if dt >= ref_dt and dt <= now + timedelta(hours=2):
-                    raw_headlines.append({
-                        "source": "Source C: CNBC Economy RSS",
-                        "title": title,
-                        "dt": dt,
-                        "pub_date": dt.isoformat()
-                    })
-    except Exception as e:
-        print(f"Source C (CNBC Economy) notice: {e}")
+    # --- SOURCE C: Curated Financial Media RSS (CNBC Economy & Finance Streams) ---
+    cnbc_feeds = [
+        ("Source C: CNBC Economy RSS", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
+        ("Source C: CNBC Finance RSS", "https://www.cnbc.com/id/10000664/device/rss/rss.html")
+    ]
+    for src_label, url_c in cnbc_feeds:
+        try:
+            req_c = urllib.request.Request(url_c, headers=headers)
+            with urllib.request.urlopen(req_c, timeout=6) as resp_c:
+                soup_c = BeautifulSoup(resp_c.read(), "xml")
+                for item in soup_c.find_all("item")[:35]:
+                    title = item.title.text.strip() if item.title else ""
+                    pub_str = item.pubDate.text if item.pubDate else ""
+                    try:
+                        dt = email.utils.parsedate_to_datetime(pub_str)
+                    except Exception:
+                        dt = now
+                    if dt >= ref_dt and dt <= now + timedelta(hours=2):
+                        raw_headlines.append({
+                            "source": src_label,
+                            "title": title,
+                            "dt": dt,
+                            "pub_date": dt.isoformat()
+                        })
+        except Exception as e:
+            pass
 
     # Deduplicate headlines based on normalized title string
     seen_titles = set()
@@ -520,6 +536,13 @@ def fetch_live_headlines(reference_date: Optional[str] = None) -> Tuple[List[Dic
         }
         with open(HEADLINES_CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(cache_payload, f, indent=2)
+
+        # Append to persistent JSONL audit trail
+        audit_log_path = Path("logs/news_headlines_audit.jsonl")
+        audit_log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(audit_log_path, "a", encoding="utf-8") as f_log:
+            for h in cache_payload["headlines"]:
+                f_log.write(json.dumps(h) + "\n")
     except Exception:
         pass
 
