@@ -13,10 +13,14 @@ from src.orchestration.logger import log_event
 from src.agents.technical import evaluate_all_etfs
 from src.agents.risk import RiskManager
 from src.agents.macro import evaluate_macro_agent
+from src.agents.portfolio import PortfolioManagerAgent
+from src.agents.human_loop import HumanInTheLoopAgent
 from src.pipeline.etf_universe import ETF_UNIVERSE
 
 load_dotenv()
 risk_engine = RiskManager()
+portfolio_engine = PortfolioManagerAgent(risk_manager=risk_engine)
+hitl_engine = HumanInTheLoopAgent(risk_manager=risk_engine)
 
 # ==========================================
 # 1. NODE IMPLEMENTATIONS (IN EXACT ORDER)
@@ -66,11 +70,12 @@ def technical_node(state: AgentState) -> Dict[str, Any]:
 
 def macro_node(state: AgentState) -> Dict[str, Any]:
     """
-    Node 3: Evaluates macro regime using Fed Communication (Apel-Grimaldi & LM)
-    plus real-time market indicators (VIX, 10Y Yields, Oil, DXY).
+    Node 3: Evaluates macro regime using Fed & ECB Communication, Live Headline Stream (Sources A, B, C),
+    and real-time market indicators (VIX, 10Y Yields, Oil, DXY, EUR/USD).
     """
     trade_date = state.get("trading_date", "2026-11-18")
-    briefing_obj = evaluate_macro_agent(trading_date=trade_date)
+    ref_date = state.get("reference_date", None)
+    briefing_obj = evaluate_macro_agent(trading_date=trade_date, reference_date=ref_date)
     
     log_event(
         event_type="MACRO_ANALYSIS",
@@ -79,13 +84,22 @@ def macro_node(state: AgentState) -> Dict[str, Any]:
             "regime": briefing_obj.macro_regime,
             "sentiment_score": briefing_obj.market_sentiment_score,
             "fed_hd_score": briefing_obj.fed_hawkish_dovish_score,
-            "lm_uncertainty": briefing_obj.fed_uncertainty_score,
+            "fed_uncertainty": briefing_obj.fed_uncertainty_score,
+            "ecb_hd_score": briefing_obj.ecb_hawkish_dovish_score,
+            "ecb_uncertainty": briefing_obj.ecb_uncertainty_score,
+            "transatlantic_policy_spread": briefing_obj.transatlantic_policy_spread,
+            "headline_sentiment": briefing_obj.headline_stream.headline_sentiment_score,
+            "headline_regime": briefing_obj.headline_stream.news_regime,
+            "news_latency_minutes": briefing_obj.headline_stream.news_latency_minutes,
+            "latest_scraped_timestamp": briefing_obj.headline_stream.latest_scraped_timestamp,
+            "timeframe_window": briefing_obj.headline_stream.timeframe_window_used,
             "theme_tilts": briefing_obj.theme_macro_tilts,
             "tail_risks": briefing_obj.tail_risk_alerts
         }
     )
     return {
         "macro_briefing": briefing_obj.executive_summary,
+        "agent_limit_notification": briefing_obj.agent_limit_notification,
         "execution_status": "MACRO_COMPLETED"
     }
 
@@ -111,123 +125,51 @@ def risk_node(state: AgentState) -> Dict[str, Any]:
     }
 
 def portfolio_manager_node(state: AgentState) -> Dict[str, Any]:
-    """Node 5: Synthesizes Technical, Macro, and Risk to construct max 5 orders + memo."""
+    """Node 5: Constructs high-conviction orders + memo via PortfolioManagerAgent."""
     tech_signals = state["tech_signals"]
-    macro = state["macro_briefing"]
     capital = state.get("starting_capital_eur", 10000.0)
-
-    # Rank bullish candidates excluding over-leveraged hazards
-    sorted_candidates = sorted(
-        tech_signals.values(),
-        key=lambda x: x["composite_score"],
-        reverse=True
+    trade_date = state.get("trading_date", "2026-11-18")
+    ref_date = state.get("reference_date", None)
+    
+    # Retrieve structured macro briefing
+    macro_briefing_obj = evaluate_macro_agent(trading_date=trade_date, reference_date=ref_date)
+    
+    proposal, risk_eval = portfolio_engine.construct_portfolio(
+        trading_date=trade_date,
+        tech_signals=tech_signals,
+        macro_briefing=macro_briefing_obj,
+        starting_capital_eur=capital
     )
     
-    # Filter top 4 distinct non-leveraged assets + 1 tactical position (max 5)
-    selected_tickers = []
-    for cand in sorted_candidates:
-        ticker = cand["ticker"]
-        meta = risk_engine.meta_map.get(ticker)
-        if meta and not meta.is_leveraged_or_short:
-            selected_tickers.append(ticker)
-        if len(selected_tickers) == 4:
-            break
-            
-    # Add 1 tactical hedge or low-vol asset (e.g. GOLD or DEFENSE)
-    if "DEFENSE" not in selected_tickers:
-        selected_tickers.append("DEFENSE")
-    else:
-        selected_tickers.append("GOLD")
-
-    # Propose balanced 20% weights (80% invested, 20% cash buffer > 5% requirement)
-    proposed_orders = []
-    allocation_per_etf = 0.18 # 18% each -> 5 * 18% = 90% invested, 10% cash
+    orders_dict = [o.model_dump() for o in proposal.orders]
     
-    for ticker in selected_tickers[:5]:
-        sig = tech_signals[ticker]
-        amount_eur = capital * allocation_per_etf
-        proposed_orders.append({
-            "ticker": ticker,
-            "action": "BUY",
-            "target_weight_pct": round(allocation_per_etf * 100, 1),
-            "estimated_amount_eur": round(amount_eur, 2),
-            "rationale": sig["summary_reason"]
-        })
-
-    # Validate proposed portfolio through Risk Manager
-    weights_map = {o["ticker"]: o["target_weight_pct"] / 100.0 for o in proposed_orders}
-    risk_eval = risk_engine.evaluate_portfolio(weights_map)
-
-    memo = (
-        f"Investment Committee Proposal for {state['trading_date']}:\n"
-        f"Macro Environment: {macro}\n"
-        f"Strategy: Deploy €{capital:,.2f} into 5 top-ranked momentum & defensive leaders "
-        f"({', '.join(selected_tickers[:5])}). Retain 10.0% cash buffer. "
-        f"Leveraged exposure strictly controlled at 0.0% to protect against daily volatility drag."
-    )
-
     log_event(
         event_type="PORTFOLIO_CONSTRUCTION",
         node_name="portfolio_manager_node",
         payload={
-            "orders": proposed_orders,
+            "orders": orders_dict,
             "is_risk_approved": risk_eval.is_approved,
-            "memo": memo
+            "memo": proposal.executive_memo
         }
     )
     return {
-        "proposed_orders": proposed_orders,
-        "portfolio_memo": memo,
+        "proposed_orders": orders_dict,
+        "portfolio_memo": proposal.executive_memo,
         "risk_evaluation": risk_eval.model_dump(),
         "execution_status": "PORTFOLIO_PROPOSED"
     }
 
 def human_approval_node(state: AgentState) -> Dict[str, Any]:
-    """Node 6: Interactive Human-in-the-Loop decision & audit checkpoint."""
-    print("\n" + "="*70)
-    print("🤖 REBEL AGENTIC TRADER — HUMAN-IN-THE-LOOP APPROVAL CHECKPOINT")
-    print("="*70)
-    print(f"Trading Date: {state['trading_date']} | Total Capital: €{state.get('starting_capital_eur', 10000.0):,.2f}")
-    print("\n--- EXECUTIVE INVESTMENT MEMO ---")
-    print(state["portfolio_memo"])
-    
-    print("\n--- PROPOSED TRADING ORDERS (MAX 5) ---")
-    for i, o in enumerate(state["proposed_orders"], 1):
-        print(f"  [{i}] {o['action']} {o['ticker']:<15} | Weight: {o['target_weight_pct']}% | Amount: €{o['estimated_amount_eur']:,.2f}")
-        print(f"      Reason: {o['rationale'][:85]}...")
-
-    risk = state["risk_evaluation"]
-    status_icon = "✅" if risk["is_approved"] else "❌"
-    print(f"\n--- RISK AUDIT REPORT: {status_icon} {risk['risk_summary']} ---")
-    print(f"Cash Reserve: {risk['cash_reserve_pct']*100:.1f}% (Min required: 5.0%)")
-    print(f"Leveraged Exposure: {risk['leveraged_exposure_pct']*100:.1f}% (Max allowed: 15.0%)")
-
-    # In non-interactive mode or automated test, default to APPROVE
-    user_choice = os.getenv("QDC_AUTO_APPROVE", "ASK")
-    
-    if user_choice == "ASK":
-        try:
-            decision = input("\nEnter Action: [A] Approve Orders | [M] Modify Notes | [R] Reject: ").strip().upper()
-        except EOFError:
-            decision = "A"
-    else:
-        decision = "A"
-
-    if decision == "A":
-        status = "APPROVED_BY_HUMAN"
-        final_orders = state["proposed_orders"]
-        notes = "Human approved all AI agent recommendations without modification."
-        print("\n✅ Orders Approved! Ready for submission to Belfius trading form.")
-    elif decision == "M":
-        status = "MODIFIED_BY_HUMAN"
-        final_orders = state["proposed_orders"]
-        notes = input("Enter human override rationale/notes: ").strip()
-        print(f"\n📝 Logged modifications with rationale: '{notes}'")
-    else:
-        status = "REJECTED_BY_HUMAN"
-        final_orders = []
-        notes = "Human rejected AI proposed allocation due to high discretionary risk."
-        print("\n🛑 Orders Rejected. No trades submitted.")
+    """Node 6: Interactive Human-in-the-Loop decision & audit checkpoint via HumanInTheLoopAgent."""
+    decision_obj = hitl_engine.review_and_decide(state)
+    return {
+        "human_approved": decision_obj.human_approved,
+        "human_decision": decision_obj.decision,
+        "human_notes": decision_obj.notes,
+        "final_orders": decision_obj.final_orders,
+        "risk_evaluation": decision_obj.risk_evaluation,
+        "execution_status": "COMPLETED"
+    }
 
     log_event(
         event_type="HUMAN_IN_THE_LOOP_DECISION",

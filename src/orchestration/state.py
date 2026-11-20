@@ -19,10 +19,12 @@ class PortfolioProposal(BaseModel):
 class AgentState(TypedDict):
     """The central state dictionary passed across all LangGraph nodes."""
     trading_date: str
+    reference_date: Optional[str]  # Custom lookback date for macro headlines & news stream
     starting_capital_eur: float
     prices: Dict[str, float]
     tech_signals: Dict[str, dict]
     macro_briefing: str
+    agent_limit_notification: Optional[str]  # Prominent notice for Human-in-the-Loop on timeframe limit
     risk_constraints: Dict[str, Any]
     proposed_orders: List[dict]
     portfolio_memo: str
