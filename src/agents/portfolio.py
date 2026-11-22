@@ -163,8 +163,8 @@ class PortfolioManagerAgent:
                 else:
                     macro_tilt = macro_briefing.theme_macro_tilts.get(theme, 0.0)
 
-            # Conviction combination
-            blended = (0.60 * tech_score) + (0.40 * macro_tilt)
+            # Conviction combination: 85% Technical ML Alpha + 15% Macro Sentiment Tilt (consistent with Advise mode)
+            blended = (0.85 * tech_score) + (0.15 * macro_tilt)
             if ticker in boosted_tickers:
                 blended += 0.30
 

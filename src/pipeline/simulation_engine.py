@@ -71,29 +71,39 @@ class SimulationEngine:
     def get_available_trading_dates(self) -> List[str]:
         df = self.get_prices()
         if df.empty:
-            return ["2026-11-20"]
-        return [str(d.date()) for d in df.index]
+            dates = ["2026-11-20"]
+        else:
+            dates = [str(d.date()) for d in df.index]
+
+        # Ensure real-time calendar dates up to current system date (e.g. 2026-11-22) are selectable
+        today_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+        if dates and today_str > dates[-1]:
+            cur_date = datetime.date.fromisoformat(dates[-1]) + datetime.timedelta(days=1)
+            target_date = datetime.date.fromisoformat(today_str)
+            while cur_date <= target_date:
+                dates.append(str(cur_date))
+                cur_date += datetime.timedelta(days=1)
+        return dates
 
     def resolve_dates(self, trading_date_str: str) -> Tuple[str, str]:
         """
-        Given a current trading day T, resolves:
-        1. T (validated trading date)
-        2. T-1 (most recent preceding trading date with available Close prices)
+        Given a current trading day T (which can be any date up to today in real time), resolves:
+        1. T (validated current trading date)
+        2. T-1 (most recent preceding trading date in market dataset strictly < T)
         """
+        df = self.get_prices()
+        market_dates = [str(d.date()) for d in df.index] if not df.empty else ["2026-11-20"]
+
         all_dates = self.get_available_trading_dates()
-        if not all_dates:
-            return trading_date_str, trading_date_str
+        t_date = trading_date_str if trading_date_str in all_dates else (all_dates[-1] if all_dates else "2026-11-20")
 
-        # If trading date is not in dataset, find closest preceding date or clamp
-        if trading_date_str in all_dates:
-            idx = all_dates.index(trading_date_str)
+        # Find most recent market date strictly before t_date
+        preceding = [d for d in market_dates if d < t_date]
+        if preceding:
+            as_of_date = preceding[-1]
         else:
-            earlier = [d for d in all_dates if d <= trading_date_str]
-            idx = all_dates.index(earlier[-1]) if earlier else 0
+            as_of_date = market_dates[0] if market_dates else t_date
 
-        t_date = all_dates[idx]
-        t_minus_1_idx = max(0, idx - 1)
-        as_of_date = all_dates[t_minus_1_idx]
         return t_date, as_of_date
 
     def _load_or_init_state(self):
@@ -154,9 +164,9 @@ class SimulationEngine:
         self.as_of_market_date = as_of_date
         self.risk_profile = risk_profile
         self.status_message = (
-            f"Phiên giao dịch được khởi tạo tại ngày {t_date}. "
-            f"Mọi quyết định và giá khớp lệnh được neo cố định theo giá đóng cửa ngày {as_of_date} (T-1 Close). "
-            f"Số vốn khởi tạo €10,000.00 sẵn sàng giải ngân."
+            f"Simulation initialized on {t_date}. "
+            f"Decisions and order execution anchored to {as_of_date} Close (Day T-1). "
+            f"Initial capital of €10,000.00 ready for deployment."
         )
 
         # Reset ledger completely
@@ -176,13 +186,13 @@ class SimulationEngine:
                 next_date = all_dates[curr_idx + 1]
                 self.current_trading_date, self.as_of_market_date = self.resolve_dates(next_date)
                 self.status_message = (
-                    f"Đã bước sang ngày giao dịch tiếp theo: {self.current_trading_date}. "
-                    f"Dữ liệu thị trường và phân tích kỹ thuật được cập nhật tới giá đóng cửa {self.as_of_market_date}."
+                    f"Advanced to next trading session: {self.current_trading_date}. "
+                    f"Market data and signals updated to {self.as_of_market_date} Close."
                 )
                 self.update_mtm()
                 self._save_state()
             else:
-                self.status_message = f"Đã đạt ngày giao dịch mới nhất trong hệ thống ({self.current_trading_date}). Không thể tiến xa hơn."
+                self.status_message = f"Reached latest available session ({self.current_trading_date}). Cannot advance further."
         return self.get_telemetry()
 
     def jump_to_date(self, target_date_str: str) -> Dict[str, Any]:
@@ -199,8 +209,8 @@ class SimulationEngine:
         self.current_trading_date = t_date
         self.as_of_market_date = as_of_date
         self.status_message = (
-            f"Đã chuyển nhanh tới ngày giao dịch {t_date}. "
-            f"Dữ liệu thị trường và phân tích kỹ thuật được neo tại giá đóng cửa {as_of_date} (T-1 Close)."
+            f"Fast-forwarded to trading session {t_date}. "
+            f"Analytics anchored to {as_of_date} Close (Day T-1)."
         )
         self.update_mtm()
         self._save_state()
@@ -302,7 +312,7 @@ class SimulationEngine:
             "trade_log": trade_log,
             "status_message": self.status_message,
             "notice_banner": (
-                f"Phiên giao dịch ngày {self.current_trading_date} | "
-                f"Giá thực thi và số liệu phân tích được cố định theo giá đóng cửa ngày {self.as_of_market_date} (Close T-1)."
+                f"Trading Session {self.current_trading_date} | "
+                f"Execution price and quantitative models anchored to {self.as_of_market_date} Close (Day T-1)."
             )
         }

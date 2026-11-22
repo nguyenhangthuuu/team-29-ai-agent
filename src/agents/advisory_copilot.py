@@ -2,7 +2,7 @@
 """
 Advisory Copilot Agent for Mode Advise.
 Generates concise, human-readable natural language AI Mini-Theses for any of the 50 ETFs
-combining Technical Machine Learning signals with Macro context (lowering news sentiment weight to ~15%).
+combining Technical Machine Learning signals with Macro context (macro news sentiment weight ~15%).
 Strictly avoids jargon dumps and presents only vital institutional figures.
 """
 
@@ -12,7 +12,6 @@ import numpy as np
 
 from src.pipeline.etf_universe import ETF_UNIVERSE, ETFMeta
 from src.agents.macro import MacroBriefing
-from src.agents.technical import TechnicalSignal
 
 
 ETF_META_MAP = {e.ticker: e for e in ETF_UNIVERSE}
@@ -23,11 +22,12 @@ def generate_etf_advise_thesis(
     tech_sig: Any,
     macro_briefing: MacroBriefing,
     close_price: float,
-    as_of_date: str
+    as_of_date: str,
+    action: str = "BUY"
 ) -> Dict[str, Any]:
     """
-    Synthesizes a boardroom-grade, concise 2-3 sentence AI Mini-Thesis in natural language
-    for any selected ETF in Advise mode.
+    Synthesizes a boardroom-grade, concise 2-3 sentence AI Mini-Thesis in English
+    for any selected ETF in Advise mode, tailored to BUY or SELL actions.
     """
     meta = ETF_META_MAP.get(ticker)
     full_name = meta.full_name if meta else ticker
@@ -60,34 +60,48 @@ def generate_etf_advise_thesis(
     # Macro thematic tilt
     macro_tilt = macro_briefing.theme_macro_tilts.get(theme, 0.0)
     regime = macro_briefing.macro_regime
+    clean_action = str(action).upper() if action else "BUY"
 
-    # In Advise mode: Technical signal carries 85% weight, Macro News carries only 15%
+    # In Advise mode: Technical signal carries 85% weight, Macro News carries 15%
     advise_conviction = round(float(np.clip(0.85 * composite_score + 0.15 * macro_tilt, -1.0, 1.0)), 3)
 
-    # Formulate Natural Language Mini-Thesis
-    tech_sentence = ""
-    if trend == "BULLISH":
-        tech_sentence = f"Xu hướng kỹ thuật tăng trưởng tích cực (Xác suất ML Outperform {rf_prob*100:.1f}%, RSI 14 phiên ở mức {rsi_14:.1f})."
-    elif trend == "BEARISH":
-        tech_sentence = f"Động lượng kỹ thuật đang chịu áp lực điều chỉnh (Xác suất ML {rf_prob*100:.1f}%, RSI lùi về {rsi_14:.1f})."
-    else:
-        tech_sentence = f"Trạng thái kỹ thuật đang trong vùng tích lũy cân bằng (RSI {rsi_14:.1f}, đà tăng 1 tháng đạt {roc_21:+.1f}%)."
+    # Formulate Natural Language Mini-Thesis in institutional English
+    if clean_action == "SELL":
+        if rsi_14 > 65:
+            tech_sentence = f"Overbought technical profile (14-day RSI {rsi_14:.1f}, 1-month return {roc_21:+.1f}%) suggests favorable conditions for profit-taking."
+        elif trend == "BEARISH":
+            tech_sentence = f"Bearish momentum confirmed by ML model (Underperform Probability {(1-rf_prob)*100:.1f}%, 14-day RSI {rsi_14:.1f}); liquidating curbs downside drift."
+        else:
+            tech_sentence = f"Neutral technical setup (RSI {rsi_14:.1f}); capital release optimizes liquidity into higher-conviction opportunities."
 
-    macro_sentence = ""
-    if macro_tilt > 0.08:
-        macro_sentence = f"Hưởng lợi từ làn sóng vĩ mô ngành {theme} và định hướng chính sách từ NHTW trong bối cảnh {regime}."
-    elif macro_tilt < -0.08:
-        macro_sentence = f"Cần lưu ý rủi ro phân hóa ngành khi vĩ mô {regime} đang tạo sức ép biên lợi nhuận lên nhóm {theme}."
-    else:
-        macro_sentence = f"Tác động vĩ mô ở mức trung tính, diễn biến giá chủ yếu dẫn dắt bởi cung cầu nội tại của nhóm tài sản."
+        if macro_tilt < -0.05:
+            macro_sentence = f"Thematic macro headwinds in {theme} support tactical de-risking under {regime} policy conditions."
+        else:
+            macro_sentence = f"Macro influence remains balanced, with exit driven primarily by portfolio rebalancing requirements."
 
-    risk_note = ""
-    if rsi_14 > 68:
-        risk_note = "Cảnh báo vùng quá mua ngắn hạn (RSI > 68); cân nhắc phân bổ tỷ trọng vừa phải để kiểm soát biến động."
-    elif rsi_14 < 32:
-        risk_note = "Tài sản đang ở vùng quá bán sâu (RSI < 32); mở ra cơ hội tích lũy tạo đáy nếu đà bán chững lại."
+        risk_note = "Position reduction improves risk-adjusted cash buffer."
     else:
-        risk_note = f"Biên độ dao động ổn định; phù hợp cho phân bổ chiến lược trong phiên."
+        # BUY thesis
+        if trend == "BULLISH":
+            tech_sentence = f"Bullish momentum intact (Random Forest Outperform Probability {rf_prob*100:.1f}%, 14-day RSI {rsi_14:.1f})."
+        elif trend == "BEARISH":
+            tech_sentence = f"Technical consolidation underway (ML Outperform Probability {rf_prob*100:.1f}%, 14-day RSI at {rsi_14:.1f})."
+        else:
+            tech_sentence = f"Balanced technical profile with 14-day RSI at {rsi_14:.1f} and 21-day momentum at {roc_21:+.1f}%."
+
+        if macro_tilt > 0.08:
+            macro_sentence = f"Strong structural tailwinds for {theme} supported by central bank stance during {regime}."
+        elif macro_tilt < -0.08:
+            macro_sentence = f"Monitored sector dispersion in {theme}; position sizing accounts for prevailing {regime} volatility."
+        else:
+            macro_sentence = f"Macro stance is neutral, with price action governed predominantly by underlying supply and demand."
+
+        if rsi_14 > 68:
+            risk_note = "RSI approaches upper threshold; controlled sizing mitigates near-term retracement risk."
+        elif rsi_14 < 32:
+            risk_note = "Oversold territory (RSI < 32) offers attractive accumulation value as downward pressure stabilizes."
+        else:
+            risk_note = "Volatility profile remains within baseline risk parameters."
 
     executive_mini_thesis = f"{tech_sentence} {macro_sentence} {risk_note}"
 
@@ -96,6 +110,7 @@ def generate_etf_advise_thesis(
         "full_name": full_name,
         "isin": isin,
         "theme": theme,
+        "action": clean_action,
         "as_of_date": as_of_date,
         "prev_close_price": round(close_price, 4),
         "advise_conviction": advise_conviction,

@@ -146,102 +146,118 @@ class PortfolioLedger:
         cvar_95: float = 0.0
     ) -> LedgerSnapshot:
         """
-        Executes target orders at current close prices (zero fees, previous close per QDC rules).
-        Liquidates assets not in target set, buys/rebalances target weights, and logs ledger snapshot.
+        Executes orders strictly capped at 5 orders per session (QDC competition rule).
+        Supports explicit BUY and SELL actions.
+        Does NOT silently liquidate unmentioned positions.
         """
         # 1. Update MtM prior to trade
         prev_nav = self.mark_to_market(current_prices)
         
-        target_tickers = {o["ticker"]: o for o in target_orders}
+        # Enforce strict maximum 5 orders per session
+        orders_to_execute = target_orders[:5]
 
-        # 2. Liquidate positions not present in new target list
-        for tkr in list(self.positions.keys()):
-            if tkr not in target_tickers:
-                pos = self.positions.pop(tkr)
-                p_exit = float(current_prices.get(tkr, pos.current_price))
-                sale_proceeds = pos.shares * p_exit
-                self.cash += sale_proceeds
-                self.trade_history.append(TradeRecord(
-                    trade_date=trade_date,
-                    ticker=tkr,
-                    action="SELL",
-                    shares=round(pos.shares, 4),
-                    price=round(p_exit, 4),
-                    total_amount=round(sale_proceeds, 2),
-                    fee=0.0
-                ))
+        # First execute any explicit SELL orders so cash proceeds become available for BUY orders
+        sell_orders = [o for o in orders_to_execute if str(o.get("action", "BUY")).upper() == "SELL"]
+        buy_orders = [o for o in orders_to_execute if str(o.get("action", "BUY")).upper() != "SELL"]
 
-        # 3. Compute available capital & rebalance target allocations
-        current_nav = self.cash + sum(p.market_value for p in self.positions.values())
-        
-        for order in target_orders:
+        # 2. Execute explicit SELL orders
+        for order in sell_orders:
             tkr = order["ticker"]
-            target_amount = float(order.get("amount", 0.0))
-            if target_amount <= 0.0 and "weight" in order:
-                target_amount = (float(order["weight"]) / 100.0) * current_nav
-
-            p_curr = float(current_prices.get(tkr, 1.0))
+            p_curr = float(current_prices.get(tkr, 0.0))
             if p_curr <= 0.0:
                 continue
 
             current_pos = self.positions.get(tkr)
-            current_shares = current_pos.shares if current_pos else 0.0
-            target_shares = target_amount / p_curr
-            delta_shares = target_shares - current_shares
+            if not current_pos or current_pos.shares <= 1e-4:
+                continue
 
-            if delta_shares > 1e-4:  # BUY
-                cost = delta_shares * p_curr
-                actual_cost = min(cost, self.cash)
-                actual_shares = actual_cost / p_curr
-                self.cash -= actual_cost
+            target_amount = float(order.get("amount", 0.0))
+            target_weight = float(order.get("weight", 0.0))
 
-                if current_pos:
-                    total_cost = (current_pos.shares * current_pos.avg_entry_price) + actual_cost
-                    new_shares = current_pos.shares + actual_shares
-                    current_pos.shares = new_shares
-                    current_pos.avg_entry_price = total_cost / (new_shares + 1e-9)
-                    current_pos.current_price = p_curr
-                    current_pos.market_value = new_shares * p_curr
-                    current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * new_shares
-                else:
-                    self.positions[tkr] = Position(
-                        ticker=tkr,
-                        shares=actual_shares,
-                        avg_entry_price=p_curr,
-                        current_price=p_curr,
-                        market_value=actual_cost,
-                        unrealized_pnl=0.0,
-                        weight_pct=0.0
-                    )
+            if target_amount > 0:
+                sell_shares = min(current_pos.shares, target_amount / p_curr)
+            elif target_weight > 0:
+                sell_shares = min(current_pos.shares, (target_weight * prev_nav) / p_curr)
+            else:
+                # Full liquidation if amount and weight are 0
+                sell_shares = current_pos.shares
 
-                self.trade_history.append(TradeRecord(
-                    trade_date=trade_date,
+            if sell_shares <= 1e-4:
+                continue
+
+            proceeds = sell_shares * p_curr
+            self.cash += proceeds
+            current_pos.shares -= sell_shares
+
+            if current_pos.shares <= 1e-4:
+                self.positions.pop(tkr, None)
+            else:
+                current_pos.market_value = current_pos.shares * p_curr
+                current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * current_pos.shares
+
+            self.trade_history.append(TradeRecord(
+                trade_date=trade_date,
+                ticker=tkr,
+                action="SELL",
+                shares=round(sell_shares, 4),
+                price=round(p_curr, 4),
+                total_amount=round(proceeds, 2),
+                fee=0.0
+            ))
+
+        # 3. Execute BUY orders
+        current_nav = self.cash + sum(p.market_value for p in self.positions.values())
+        for order in buy_orders:
+            tkr = order["ticker"]
+            p_curr = float(current_prices.get(tkr, 0.0))
+            if p_curr <= 0.0:
+                continue
+
+            target_amount = float(order.get("amount", 0.0))
+            target_weight = float(order.get("weight", 0.0))
+            if target_amount <= 0.0 and target_weight > 0.0:
+                target_amount = target_weight * current_nav
+
+            if target_amount <= 0.0:
+                continue
+
+            # Limit by available cash
+            actual_cost = min(target_amount, max(0.0, self.cash))
+            if actual_cost <= 0.01:
+                continue
+
+            actual_shares = actual_cost / p_curr
+            self.cash -= actual_cost
+
+            current_pos = self.positions.get(tkr)
+            if current_pos:
+                total_cost = (current_pos.shares * current_pos.avg_entry_price) + actual_cost
+                new_shares = current_pos.shares + actual_shares
+                current_pos.shares = new_shares
+                current_pos.avg_entry_price = total_cost / (new_shares + 1e-9)
+                current_pos.current_price = p_curr
+                current_pos.market_value = new_shares * p_curr
+                current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * new_shares
+            else:
+                self.positions[tkr] = Position(
                     ticker=tkr,
-                    action="BUY",
-                    shares=round(actual_shares, 4),
-                    price=round(p_curr, 4),
-                    total_amount=round(actual_cost, 2),
-                    fee=0.0
-                ))
+                    shares=actual_shares,
+                    avg_entry_price=p_curr,
+                    current_price=p_curr,
+                    market_value=actual_cost,
+                    unrealized_pnl=0.0,
+                    weight_pct=0.0
+                )
 
-            elif delta_shares < -1e-4:  # SELL / TRIM
-                sell_shares = abs(delta_shares)
-                proceeds = sell_shares * p_curr
-                self.cash += proceeds
-                if current_pos:
-                    current_pos.shares -= sell_shares
-                    current_pos.market_value = current_pos.shares * p_curr
-                    current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * current_pos.shares
-
-                self.trade_history.append(TradeRecord(
-                    trade_date=trade_date,
-                    ticker=tkr,
-                    action="SELL",
-                    shares=round(sell_shares, 4),
-                    price=round(p_curr, 4),
-                    total_amount=round(proceeds, 2),
-                    fee=0.0
-                ))
+            self.trade_history.append(TradeRecord(
+                trade_date=trade_date,
+                ticker=tkr,
+                action="BUY",
+                shares=round(actual_shares, 4),
+                price=round(p_curr, 4),
+                total_amount=round(actual_cost, 2),
+                fee=0.0
+            ))
 
         # 4. Final Mark-to-Market & Period PnL
         final_nav = self.mark_to_market(current_prices)

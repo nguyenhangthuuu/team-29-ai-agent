@@ -260,7 +260,8 @@ def get_etf_universe_statistics(as_of_date: Optional[str] = None):
 @app.get("/api/etf/advise-thesis")
 def get_etf_advise_thesis_endpoint(
     ticker: str = Query(..., description="ETF Ticker"),
-    trading_date: Optional[str] = None
+    trading_date: Optional[str] = None,
+    action: Optional[str] = Query("BUY", description="Order action: BUY or SELL")
 ):
     """
     Generates a concise 2-3 sentence AI Mini-Thesis in natural language for Mode Advise.
@@ -290,7 +291,8 @@ def get_etf_advise_thesis_endpoint(
         tech_sig=tech_sig,
         macro_briefing=macro_briefing,
         close_price=close_price,
-        as_of_date=as_of_date
+        as_of_date=as_of_date,
+        action=action or "BUY"
     )
     return thesis
 
@@ -467,7 +469,7 @@ def run_rebalance(req: RebalanceRequest):
 
         # Benchmark WORLD Performance Comparison
         bench_ret_series = []
-        port_nav_series = []
+        bench_nav_scaled = []
         chart_dates = []
 
         if "WORLD" in date_slice.columns:
@@ -475,20 +477,29 @@ def run_rebalance(req: RebalanceRequest):
             if not w_series.empty:
                 w0 = w_series.iloc[0]
                 bench_ret_series = [round(float((p - w0) / w0 * 100), 2) for p in w_series]
+                bench_nav_scaled = [round(10000.0 * (1.0 + r / 100.0), 2) for r in bench_ret_series]
                 chart_dates = [str(d.date()) for d in w_series.index]
 
         # Historical simulated NAV equity curve
         if len(_ledger.snapshots) > 1:
-            port_dates = [s.trade_date for s in _ledger.snapshots]
-            port_navs = [s.total_nav for s in _ledger.snapshots]
+            snap_map = {s.trade_date: s.total_nav for s in _ledger.snapshots}
+            port_navs = []
+            running_nav = 10000.0
+            for d in chart_dates:
+                if d in snap_map:
+                    running_nav = snap_map[d]
+                port_navs.append(round(running_nav, 2))
         else:
-            base_val = 10000.0
+            base_val = round(current_nav, 2)
             port_navs = [base_val] * len(chart_dates) if chart_dates else [base_val]
-            port_dates = chart_dates if chart_dates else [t_date]
+
+        port_ret_series = [round(((n - 10000.0) / 10000.0) * 100, 2) for n in port_navs]
 
         portfolio_chart = {
             "dates": chart_dates or [t_date],
-            "portfolio_nav": port_navs[-len(chart_dates):] if chart_dates else port_navs,
+            "portfolio_nav": port_navs,
+            "portfolio_returns_pct": port_ret_series,
+            "benchmark_nav_scaled": bench_nav_scaled,
             "benchmark_returns_pct": bench_ret_series,
             "current_return_pct": round(((current_nav - 10000.0) / 10000.0) * 100, 2),
             "benchmark_return_pct": bench_ret_series[-1] if bench_ret_series else 0.0,
@@ -683,10 +694,11 @@ def execute_orders(req: ExecuteRequest):
     target_orders = [
         {
             "ticker": o["ticker"],
+            "action": str(o.get("action", "BUY")).upper(),
             "amount": float(o.get("target_amount_eur", 0.0)),
             "weight": float(o.get("target_weight_pct", 0.0)) / 100.0
         }
-        for o in req.orders
+        for o in req.orders[:5]
     ]
 
     snapshot = _ledger.execute_rebalancing(
@@ -697,14 +709,14 @@ def execute_orders(req: ExecuteRequest):
         cvar_95=0.0
     )
 
-    message = f"Đã thực thi thành công {len(target_orders)} lệnh tái cân bằng trong phiên {t_date} tại giá đóng cửa {as_of_date} (T-1 Close)."
+    message = f"Successfully executed {len(target_orders)} orders for session {t_date} at {as_of_date} Close (Day T-1)."
 
     # Auto step to next trading day if requested
     next_day_stepped = False
     if req.auto_step:
         sim_engine.step_next_trading_day()
         next_day_stepped = True
-        message += f" Đã tự động chuyển sang ngày giao dịch tiếp theo: {sim_engine.current_trading_date}."
+        message += f" Advanced to next session: {sim_engine.current_trading_date}."
 
     telemetry = sim_engine.get_telemetry()
 

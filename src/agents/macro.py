@@ -434,6 +434,7 @@ def fetch_live_headlines(
                     for item in soup_a.find_all("item")[:40]:
                         title = item.title.text.strip() if item.title else ""
                         pub_str = item.pubDate.text if item.pubDate else ""
+                        link = item.link.text.strip() if item.link else ""
                         try:
                             dt = email.utils.parsedate_to_datetime(pub_str)
                             if dt.tzinfo is None:
@@ -441,9 +442,15 @@ def fetch_live_headlines(
                         except Exception:
                             dt = now
                         if dt >= start_dt and dt <= end_dt:
+                            clean_pub = "Reuters"
+                            if " - " in title:
+                                p_cand = title.split(" - ")[-1].strip()
+                                if len(p_cand) < 30 and not any(ch in p_cand for ch in ["http", "/", "\\"]):
+                                    clean_pub = p_cand
                             raw_headlines.append({
-                                "source": src_label,
+                                "source": clean_pub,
                                 "title": title,
+                                "article_url": link or "https://www.reuters.com/markets",
                                 "dt": dt,
                                 "pub_date": dt.isoformat()
                             })
@@ -458,6 +465,8 @@ def fetch_live_headlines(
                 for n in (t.news or [])[:8]:
                     title = n.get("content", {}).get("title") or n.get("title")
                     pub_str = n.get("content", {}).get("pubDate") or n.get("pubDate")
+                    link = n.get("content", {}).get("canonicalUrl", {}).get("url") or n.get("link") or ""
+                    pub_provider = n.get("content", {}).get("provider", {}).get("displayName") or "Bloomberg"
                     if not title:
                         continue
                     try:
@@ -468,8 +477,9 @@ def fetch_live_headlines(
                         dt = now
                     if dt >= start_dt and dt <= end_dt:
                         raw_headlines.append({
-                            "source": f"Source B: Yahoo Finance ({sym})",
+                            "source": pub_provider,
                             "title": title,
+                            "article_url": link or f"https://finance.yahoo.com/quote/{sym}",
                             "dt": dt,
                             "pub_date": dt.isoformat()
                         })
@@ -478,8 +488,8 @@ def fetch_live_headlines(
 
         # --- SOURCE C: Curated Financial Media RSS (CNBC Economy & Finance Streams) ---
         cnbc_feeds = [
-            ("Source C: CNBC Economy RSS", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
-            ("Source C: CNBC Finance RSS", "https://www.cnbc.com/id/10000664/device/rss/rss.html")
+            ("CNBC Economy", "https://www.cnbc.com/id/20910258/device/rss/rss.html"),
+            ("CNBC Finance", "https://www.cnbc.com/id/10000664/device/rss/rss.html")
         ]
         for src_label, url_c in cnbc_feeds:
             try:
@@ -489,6 +499,7 @@ def fetch_live_headlines(
                     for item in soup_c.find_all("item")[:35]:
                         title = item.title.text.strip() if item.title else ""
                         pub_str = item.pubDate.text if item.pubDate else ""
+                        link = item.link.text.strip() if item.link else ""
                         try:
                             dt = email.utils.parsedate_to_datetime(pub_str)
                             if dt.tzinfo is None:
@@ -497,8 +508,9 @@ def fetch_live_headlines(
                             dt = now
                         if dt >= start_dt and dt <= end_dt:
                             raw_headlines.append({
-                                "source": src_label,
+                                "source": "CNBC",
                                 "title": title,
+                                "article_url": link or "https://www.cnbc.com/markets",
                                 "dt": dt,
                                 "pub_date": dt.isoformat()
                             })

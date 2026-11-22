@@ -16,27 +16,27 @@ from src.pipeline.etf_universe import ETF_UNIVERSE, ETFMeta
 METRIC_TOOLTIPS = {
     "return_pa": {
         "title": "Return % p.a. (CAGR)",
-        "definition": "Tỷ suất sinh lời kép hàng năm (Compound Annual Growth Rate) tính trên chuỗi giá 252 phiên giao dịch gần nhất, phản ánh tốc độ tăng trưởng vốn chuẩn hóa mỗi năm."
+        "definition": "Compound Annual Growth Rate computed across the trailing 252 sessions, reflecting annualized capital growth."
     },
     "price_trend_30d": {
-        "title": "30-Day Price Trend & Change",
-        "definition": "Biểu đồ xu hướng giá thu nhỏ (Sparkline) và tỷ lệ % tăng/giảm trong 30 phiên giao dịch gần nhất, cho biết hướng đi ngắn hạn của dòng tiền."
+        "title": "30-Day Price Trend",
+        "definition": "Trailing 30-session price trajectory sparkline and percentage change, indicating short-term momentum."
     },
     "volatility_pa": {
-        "title": "Volatility % p.a. (Biến động năm hóa)",
-        "definition": "Độ lệch chuẩn lợi suất hàng ngày nhân căn bậc hai 252 phiên (Annualized Volatility). Đo lường biên độ rủi ro dao động giá; tỷ lệ càng cao tài sản càng biến động mạnh."
+        "title": "Volatility % p.a.",
+        "definition": "Annualized standard deviation of daily log returns (scaled by sqrt(252)), quantifying price dispersion."
     },
     "max_drawdown": {
-        "title": "Max Drawdown % (Mức sụt giảm tối đa)",
-        "definition": "Phần trăm sụt giảm lớn nhất từ đỉnh cao nhất xuống đáy sâu nhất trong vòng 252 phiên gần nhất, thể hiện mức lỗ nặng nề nhất mà nhà đầu tư có thể trải qua."
+        "title": "Max Drawdown %",
+        "definition": "Maximum peak-to-trough capital decline over the trailing 252 sessions, indicating worst-case tail risk."
     },
     "sharpe_ratio": {
         "title": "Sharpe Ratio (Rf = 2.5%)",
-        "definition": "Tỷ số đo lường hiệu quả sinh lời trên một đơn vị rủi ro so với lãi suất phi rủi ro Châu Âu (2.5%). Sharpe > 1.0 là tốt, > 1.5 là xuất sắc, < 0 là kém hiệu quả."
+        "definition": "Risk-adjusted excess return over the European risk-free benchmark rate (2.5%). Values > 1.0 indicate attractive risk-adjusted performance."
     },
     "momentum_6m": {
-        "title": "6-Month Momentum (Động lượng 6 tháng)",
-        "definition": "Tỷ suất sinh lời giá trong 126 phiên giao dịch gần nhất (~6 tháng), phản ánh sức mạnh xu hướng trung hạn của tài sản trên thị trường."
+        "title": "6-Month Momentum %",
+        "definition": "Cumulative price return over trailing 126 trading sessions (~6 months), measuring medium-term trend persistence."
     }
 }
 
