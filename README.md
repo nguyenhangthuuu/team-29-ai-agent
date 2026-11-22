@@ -139,14 +139,26 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 2. Configure Environment Variables
-Copy `.env.example` to `.env` (optional: add API keys for live LLM inference):
+### 2. Configure Environment Variables (Optional)
+Copy `.env.example` to `.env`:
 
 ```bash
-# Optional: Add OpenAI API key for LLM-powered Macro & Portfolio synthesis
-# If omitted, the engine uses deterministic fallback logic with zero cost.
-OPENAI_API_KEY="your-api-key-here"
+cp .env.example .env
 ```
+> **Note on LLM API Keys:**
+> Adding a `GEMINI_API_KEY` is **completely optional**. If left blank, the pipeline automatically falls back to our **100% free, deterministic Loughran-McDonald NLP financial lexicon ($0.00 cost)** without errors.
+
+### 3. Launch the Interactive Neo-Terminal Dashboard
+You can start the entire web trading desk with one command:
+
+```bash
+bash start.sh
+```
+Or manually:
+```bash
+uvicorn src.api.server:app --host 0.0.0.0 --port 8000 --reload
+```
+Then navigate to **`http://localhost:8000`** in your web browser.
 
 ### 3. Step 1: Run the Data Pipeline
 Downloads 3 years of daily data for all 50 ETFs, converts prices to EUR, and computes returns, volatility, drawdowns, and correlations:

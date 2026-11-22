@@ -25,9 +25,10 @@ PRICES_FILE_PATH = os.path.join(
 FEATURE_COLS = [
     "dist_sma20", "dist_sma50", "ema20_sma50_ratio",
     "roc_5d", "roc_10d", "roc_21d", "roc_63d",
-    "rsi_14", "macd_hist_norm",
+    "mom_accel_5_21",
+    "rsi_14", "rsi_slope_3d", "macd_hist_norm",
     "realized_vol_20d", "realized_vol_63d",
-    "boll_bandwidth", "boll_pct_b",
+    "boll_bandwidth", "boll_pct_b", "boll_pct_b_delta",
     "rel_roc21_vs_world", "rel_roc63_vs_world",
     "is_leveraged", "theme_code"
 ]
@@ -105,21 +106,26 @@ def extract_features_single_series(
     df["dist_sma50"] = (p / (sma50 + 1e-9)) - 1.0
     df["ema20_sma50_ratio"] = (ema20 / (sma50 + 1e-9)) - 1.0
 
-    # 2. Multi-Horizon Momentum
+    # 2. Multi-Horizon Momentum & Fast Reversal Dynamics
     df["roc_5d"] = p.pct_change(5)
     df["roc_10d"] = p.pct_change(10)
     df["roc_21d"] = p.pct_change(21)
     df["roc_63d"] = p.pct_change(63)
+    # Fast Reversal 1: Momentum Acceleration Spread (short-term vs intermediate-term)
+    df["mom_accel_5_21"] = df["roc_5d"] - df["roc_21d"]
 
-    # 3. Oscillators
+    # 3. Oscillators & Fast Reversal Exhaustion
     df["rsi_14"] = calc_rsi(p, 14)
+    # Fast Reversal 2: 3-day RSI Slope (Overbought Exhaustion / Divergence)
+    df["rsi_slope_3d"] = (df["rsi_14"] - df["rsi_14"].shift(3)) / 100.0
+
     ema12 = p.ewm(span=12, adjust=False).mean()
     ema26 = p.ewm(span=26, adjust=False).mean()
     macd_line = ema12 - ema26
     signal_line = macd_line.ewm(span=9, adjust=False).mean()
     df["macd_hist_norm"] = (macd_line - signal_line) / (p + 1e-9)
 
-    # 4. Volatility Dynamics
+    # 4. Volatility Dynamics & Band Slippage
     log_ret = np.log(p / p.shift(1))
     df["realized_vol_20d"] = log_ret.rolling(20).std() * np.sqrt(252)
     df["realized_vol_63d"] = log_ret.rolling(63).std() * np.sqrt(252)
@@ -129,6 +135,8 @@ def extract_features_single_series(
     lower_b = sma20 - 2.0 * std20
     df["boll_bandwidth"] = (upper_b - lower_b) / (sma20 + 1e-9)
     df["boll_pct_b"] = (p - lower_b) / (upper_b - lower_b + 1e-9)
+    # Fast Reversal 3: 3-day Bollinger Band %B Slippage
+    df["boll_pct_b_delta"] = df["boll_pct_b"] - df["boll_pct_b"].shift(3)
 
     # 5. Relative Strength vs WORLD
     if bmk is not None:
@@ -253,10 +261,12 @@ def retrain_if_new_data(
 
 
 def get_rf_model_bundle() -> dict:
-    """Loads cached Random Forest model bundle, or trains it if not present."""
+    """Loads cached Random Forest model bundle, or retrains if not present or feature schema mismatched."""
     if os.path.exists(MODEL_CACHE_PATH):
         try:
-            return joblib.load(MODEL_CACHE_PATH)
+            bundle = joblib.load(MODEL_CACHE_PATH)
+            if bundle.get("feature_cols") == FEATURE_COLS:
+                return bundle
         except Exception:
             return train_rf_model()
     return train_rf_model()
@@ -324,6 +334,18 @@ def evaluate_etf_technical(
     # Map probability [0, 1] to composite score [-1, +1]
     composite_score = float(np.clip(2.0 * rf_prob - 1.0, -1.0, 1.0))
 
+    # Fast Reversal Tactical Guard:
+    # If an asset suffers severe short-term momentum deceleration (5d ROC lagging 21d ROC by > 8%),
+    # apply a small exhaustion penalty to avoid the Trailing Momentum Trap.
+    mom_accel = float(latest_row["mom_accel_5_21"].iloc[0] * 100) if "mom_accel_5_21" in latest_row else 0.0
+    rsi_slope = float(latest_row["rsi_slope_3d"].iloc[0] * 100) if "rsi_slope_3d" in latest_row else 0.0
+    pct_b_delta = float(latest_row["boll_pct_b_delta"].iloc[0]) if "boll_pct_b_delta" in latest_row else 0.0
+
+    if mom_accel < -8.0 and composite_score > 0:
+        composite_score = max(0.01, composite_score - 0.08)
+    elif mom_accel > 8.0 and composite_score > 0:
+        composite_score = min(1.0, composite_score + 0.05)
+
     # 3. Categorize Trend & Status
     if rf_prob >= 0.56:
         trend = "BULLISH"
@@ -370,6 +392,20 @@ def evaluate_etf_technical(
         reasons.append(f"Benchmark Outperformance: +{rel_roc21:.1f}% 21d relative excess alpha vs WORLD")
     elif rel_roc21 < -1.5:
         reasons.append(f"Benchmark Lag: {rel_roc21:.1f}% 21d relative underperformance vs WORLD")
+
+    # Fast Reversal dynamics
+    if mom_accel < -6.0:
+        reasons.append(f"Momentum Deceleration: 5d ROC lags 21d ROC by {abs(mom_accel):.1f}% (short-term stall warning)")
+    elif mom_accel > 6.0:
+        reasons.append(f"Momentum Acceleration: 5d ROC outpaces 21d ROC by +{mom_accel:.1f}%")
+
+    if rsi_slope < -8.0 and rsi_val > 55.0:
+        reasons.append(f"RSI Exhaustion: 3d RSI cooled by {abs(rsi_slope):.1f} pts (buyer fatigue)")
+    elif rsi_slope > 8.0 and rsi_val < 45.0:
+        reasons.append(f"RSI Rebound: 3d RSI hooked upward by +{rsi_slope:.1f} pts")
+
+    if pct_b_delta < -0.20 and pct_b > 0.65:
+        reasons.append("Bollinger Retracement: price slipping back inside upper band")
 
     reasons.append(f"Momentum & Volatility Quality: 14d RSI at {rsi_val:.1f} ({rsi_state}), Bollinger Bandwidth at {boll_bw:.3f}")
     summary_reason = " | ".join(reasons)

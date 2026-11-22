@@ -117,14 +117,51 @@ class PortfolioManagerAgent:
         """
         boosted_tickers = boosted_tickers or set()
         convictions = {}
+
+        # Canonical mapping resolving ETF_UNIVERSE themes (20 themes) to Macro Tilts (7 clusters)
+        THEME_NORM_MAP = {
+            "equity / tech": "Technology",
+            "frontier tech": "Technology",
+            "us equity": "Technology",
+            "global equity (benchmark)": "European Equities",
+            "european equity": "European Equities",
+            "home market": "European Equities",
+            "financials": "European Equities",
+            "emerging markets": "Emerging Markets",
+            "energy & commodities": "Energy & Commodities",
+            "energy transition": "Energy & Commodities",
+            "precious metals": "Precious Metals",
+            "industrial metals": "Energy & Commodities",
+            "defensive sector": "Defensive Sectors",
+            "health care": "Defensive Sectors",
+            "fixed income / bonds": "Defensive Sectors",
+            "money market (cash)": "Defensive Sectors",
+            "size & style factors": "Defensive Sectors",
+            "income strategies": "Technology",
+            "digital assets": "Digital Assets",
+            "leveraged & inverse": "Technology"
+        }
+
+        macro_tilts_normalized = {k.lower(): v for k, v in macro_briefing.theme_macro_tilts.items()}
+
         for ticker, sig_dict in tech_signals.items():
             meta = self.meta_map.get(ticker)
             if not meta:
                 continue
 
-            tech_score = sig_dict.get("composite_score", 0.0)
+            tech_score = sig_dict.get("composite_score", 0.0) if isinstance(sig_dict, dict) else getattr(sig_dict, "composite_score", 0.0)
             theme = meta.theme
-            macro_tilt = macro_briefing.theme_macro_tilts.get(theme, 0.0)
+            theme_clean = theme.strip().lower()
+
+            # Resolve macro tilt using case-insensitive direct match or canonical cluster mapping
+            if theme_clean in macro_tilts_normalized:
+                macro_tilt = macro_tilts_normalized[theme_clean]
+            else:
+                target_cluster = THEME_NORM_MAP.get(theme_clean)
+                if target_cluster and target_cluster.lower() in macro_tilts_normalized:
+                    macro_tilt = macro_tilts_normalized[target_cluster.lower()]
+                else:
+                    macro_tilt = macro_briefing.theme_macro_tilts.get(theme, 0.0)
 
             # Conviction combination
             blended = (0.60 * tech_score) + (0.40 * macro_tilt)
@@ -227,26 +264,72 @@ class PortfolioManagerAgent:
             if len(selected_tickers) == 4:
                 break
 
-        # 4. Tactical Safe Haven / Regime Hedge as 5th asset
-        if clean_profile == "CONSERVATIVE":
-            hedge_candidate = "WORLD MIN VOL" if "WORLD MIN VOL" not in selected_tickers else "EUR GOVT BOND"
-        elif regime == "RISK_OFF":
-            hedge_candidate = "GOLD" if ("GOLD" not in selected_tickers and "GOLD" not in excluded_tickers) else "DEFENSE"
-        elif regime == "STAGFLATION":
-            hedge_candidate = "WORLD ENERGY" if ("WORLD ENERGY" not in selected_tickers and "WORLD ENERGY" not in excluded_tickers) else "GOLD"
-        else:
-            hedge_candidate = "WORLD MIN VOL" if "WORLD MIN VOL" not in selected_tickers else "DEFENSE"
+        # 4. Tactical Safe Haven / Dynamic Defensive Basket as 5th asset
+        # Rather than rigidly forcing a single asset (e.g. GOLD which can plunge during rate hikes/dollar surges),
+        # evaluate an institutional defensive candidate basket and dynamically select the highest-conviction asset
+        # that shows non-negative momentum/conviction (>= 0.0).
+        # If all defensive assets are trending downward, preserve capital by allocating to OVERNIGHT CASH.
+        defensive_pool = [
+            "EUR GOVT BOND", "GLOBAL AGG BOND", "US TREASURY 20Y",
+            "WORLD MIN VOL", "STAPLES", "HEALTH CARE", "GOLD", "OVERNIGHT CASH"
+        ]
 
-        if hedge_candidate not in selected_tickers and hedge_candidate not in excluded_tickers:
-            selected_tickers.append(hedge_candidate)
+        if regime in ["RISK_OFF", "STAGFLATION"] or clean_profile == "CONSERVATIVE":
+            available_hedges = [
+                t for t in defensive_pool
+                if t not in selected_tickers and t not in excluded_tickers and t in self.meta_map
+            ]
+            viable_hedges = [t for t in available_hedges if convictions.get(t, -1.0) >= 0.0]
+            if viable_hedges:
+                viable_hedges.sort(key=lambda t: convictions.get(t, 0.0), reverse=True)
+                selected_tickers.append(viable_hedges[0])
+            else:
+                if "OVERNIGHT CASH" not in selected_tickers and "OVERNIGHT CASH" not in excluded_tickers:
+                    selected_tickers.append("OVERNIGHT CASH")
+        else:
+            # In RISK_ON / NEUTRAL regime:
+            # If fewer than 5 assets selected, pick the next highest conviction candidate
+            for ticker, score in sorted_candidates:
+                if len(selected_tickers) >= 5:
+                    break
+                if ticker not in selected_tickers and ticker not in excluded_tickers:
+                    meta = self.meta_map.get(ticker)
+                    if meta:
+                        if meta.is_leveraged_or_short and not allow_leveraged:
+                            continue
+                        selected_tickers.append(ticker)
+            
+            # If still fewer than 5 assets, fall back to best defensive candidate or cash
+            if len(selected_tickers) < 5:
+                for t in defensive_pool:
+                    if t not in selected_tickers and t not in excluded_tickers:
+                        selected_tickers.append(t)
+                        break
 
         # Truncate to maximum 5 assets
         selected_tickers = selected_tickers[:5]
 
-        # 5. Preliminary Position Sizing
-        asset_count = len(selected_tickers)
-        base_weight_per_asset = round(deployable_capital_pct / max(1, asset_count), 4)
-        raw_weights = {ticker: min(base_weight_per_asset, max_single_cap) for ticker in selected_tickers}
+        # 5. Conviction-Weighted Dynamic Sizing (Alpha-Proportional Allocation)
+        # Dynamically sizes positions based on model conviction, allocating up to max_single_cap
+        # to top ideas while preserving risk-seeking upside and avoiding arbitrary volatility penalties.
+        if selected_tickers:
+            min_c = min(convictions.get(t, 0.05) for t in selected_tickers)
+            shift = max(0.0, -min_c + 0.05)
+            pos_scores = {t: max(0.05, convictions.get(t, 0.0) + shift) for t in selected_tickers}
+            total_score = sum(pos_scores.values())
+
+            raw_weights = {}
+            for t in selected_tickers:
+                ideal_w = deployable_capital_pct * (pos_scores[t] / total_score)
+                raw_weights[t] = round(min(max_single_cap, max(0.05, ideal_w)), 4)
+
+            # Rescale if sum exceeds deployable capital
+            total_allocated = sum(raw_weights.values())
+            if total_allocated > deployable_capital_pct:
+                scale = deployable_capital_pct / total_allocated
+                raw_weights = {t: round(raw_weights[t] * scale, 4) for t in selected_tickers}
+        else:
+            raw_weights = {}
 
         # 6. Closed-Loop Validation with Risk Manager
         risk_eval = self.risk_manager.evaluate_portfolio(raw_weights)
@@ -264,7 +347,11 @@ class PortfolioManagerAgent:
                 continue
             amount_eur = round(starting_capital_eur * weight, 2)
             tech_sig = tech_signals.get(ticker, {})
-            rationale = tech_sig.get("summary_reason", "Momentum and macro regime alignment.")
+            rationale = (
+                tech_sig.get("summary_reason", "Momentum and macro regime alignment.")
+                if isinstance(tech_sig, dict)
+                else getattr(tech_sig, "summary_reason", "Momentum and macro regime alignment.")
+            )
 
             proposed_orders.append(
                 OrderItem(
@@ -309,7 +396,10 @@ class PortfolioManagerAgent:
                 continue
 
             sig = tech_signals.get(ticker, {})
-            rf_prob = sig.get("ml_win_probability", 0.50)
+            if isinstance(sig, dict):
+                rf_prob = sig.get("rf_probability", sig.get("ml_win_probability", 0.50))
+            else:
+                rf_prob = getattr(sig, "rf_probability", getattr(sig, "ml_win_probability", 0.50))
             theme_tilt = macro_briefing.theme_macro_tilts.get(meta.theme, 0.0)
             top_score = convictions.get(selected_tickers[0], score)
             conviction_diff = round(abs(top_score - score) * 100, 1)
@@ -327,7 +417,7 @@ class PortfolioManagerAgent:
                 "conviction_score": round(score, 3),
                 "rf_win_prob": round(rf_prob, 3),
                 "theme_macro_tilt": round(theme_tilt, 2),
-                "momentum_label": sig.get("primary_trend", "NEUTRAL"),
+                "momentum_label": sig.get("trend", sig.get("primary_trend", "NEUTRAL")) if isinstance(sig, dict) else getattr(sig, "trend", "NEUTRAL"),
                 "trade_off_evidence": evidence
             })
             if len(alternative_candidates) >= 5:
