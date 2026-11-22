@@ -426,10 +426,20 @@ def evaluate_etf_technical(
     )
 
 
+_TECH_SIGNALS_CACHE: Dict[str, Dict[str, TechnicalSignal]] = {}
+
 def evaluate_all_etfs(prices_df: pd.DataFrame, benchmark_ticker: str = "WORLD") -> Dict[str, TechnicalSignal]:
-    """Evaluates all ETFs in the price dataframe using Random Forest binary classification."""
+    """Evaluates all ETFs in the price dataframe using Random Forest binary classification with in-memory caching."""
+    if prices_df.empty:
+        return {}
+    cache_key = f"{str(prices_df.index[-1])}_{len(prices_df)}_{benchmark_ticker}"
+    if cache_key in _TECH_SIGNALS_CACHE:
+        return _TECH_SIGNALS_CACHE[cache_key]
+
     benchmark = prices_df[benchmark_ticker] if benchmark_ticker in prices_df.columns else None
     results = {}
     for col in prices_df.columns:
         results[col] = evaluate_etf_technical(prices_df[col], ticker=col, benchmark_prices=benchmark)
+    
+    _TECH_SIGNALS_CACHE[cache_key] = results
     return results

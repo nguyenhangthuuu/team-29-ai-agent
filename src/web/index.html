@@ -831,16 +831,13 @@
     // App Initialization
     window.addEventListener('DOMContentLoaded', async () => {
       try { lucide.createIcons(); } catch (e) {}
-      showLoadingOverlay("Initializing Terminal", "Connecting to multi-agent backend and loading market states...");
       try {
         await loadUniverseStats();
         await fetchSimulationState();
-        await runRebalance();
+        await runRebalance(false);
       } catch (err) {
         console.error("Initialization error:", err);
         showToast("Initialization error: " + err.message, "error");
-      } finally {
-        hideLoadingOverlay();
       }
     });
 
@@ -908,10 +905,14 @@
     }
 
     // 2. Run Multi-Agent Rebalance (Mandate vs Advise)
-    async function runRebalance() {
-      showLoadingOverlay("Calculating Multi-Agent Signals", "Running Random Forest ML, central bank analysis, and risk verification...");
+    async function runRebalance(showOverlay = false) {
+      if (showOverlay) {
+        showLoadingOverlay("Calculating Multi-Agent Signals", "Running Random Forest ML, central bank analysis, and risk verification...");
+      }
       const icon = document.getElementById('rebalance-icon');
+      const btn = document.getElementById('btn-rebalance');
       if (icon) icon.classList.add('animate-spin');
+      if (btn) btn.disabled = true;
 
       try {
         state.currentTradingDate = document.getElementById('date-select').value;
@@ -964,7 +965,8 @@
         showToast("Allocation failed: " + err.message, "error");
       } finally {
         if (icon) icon.classList.remove('animate-spin');
-        hideLoadingOverlay();
+        if (btn) btn.disabled = false;
+        if (showOverlay) hideLoadingOverlay();
       }
     }
 

@@ -109,6 +109,15 @@ def generate_historical_backtest_headlines(
     trading_dates = []
     asset_returns = {}
     
+    if isinstance(as_of_dt, str):
+        from datetime import datetime, timezone
+        try:
+            as_of_dt = datetime.fromisoformat(as_of_dt.replace("Z", "+00:00"))
+            if as_of_dt.tzinfo is None:
+                as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            as_of_dt = datetime.strptime(as_of_dt[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    
     as_of_date_str = as_of_dt.strftime("%Y-%m-%d")
 
     if parquet_path.exists():

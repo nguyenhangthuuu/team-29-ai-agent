@@ -1,3 +1,4 @@
+from __future__ import annotations
 # src/agents/macro.py
 """
 Macro & News Agent for QDC 2026/2027 (ReBel x QuantumBlack).
@@ -12,6 +13,7 @@ Supports Google Gemini 1.5 Flash (Free Tier) with a 100% Deterministic Fallback.
 """
 
 import os
+import time
 import re
 import json
 import urllib.request
@@ -403,6 +405,25 @@ def fetch_live_headlines(
     Strict zero lookahead bias: Rejects any item where publication timestamp > T.
     For historical backtesting dates, seamlessly integrates date-consistent backtest news.
     """
+    cache_key = f"{reference_date}_{lookback_days}"
+    now_ts = time.time()
+    if cache_key in _HEADLINES_MEMORY_CACHE and (now_ts - _HEADLINES_MEMORY_CACHE[cache_key][0] < 900):
+        return _HEADLINES_MEMORY_CACHE[cache_key][1]
+
+    # Check disk cache if recent (30 min TTL)
+    if HEADLINES_CACHE_FILE.exists():
+        try:
+            mtime = HEADLINES_CACHE_FILE.stat().st_mtime
+            if (now_ts - mtime) < 1800:
+                with open(HEADLINES_CACHE_FILE, "r", encoding="utf-8") as f_c:
+                    cached_data = json.load(f_c)
+                    if "headlines" in cached_data and "metadata" in cached_data and len(cached_data["headlines"]) > 10:
+                        res = (cached_data["headlines"], cached_data["metadata"])
+                        _HEADLINES_MEMORY_CACHE[cache_key] = (now_ts, res)
+                        return res
+        except Exception:
+            pass
+
     HEADLINES_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     now = datetime.now(timezone.utc)
     start_dt, end_dt, window_desc, notification = parse_timeframe_window(reference_date, lookback_days=lookback_days)
@@ -608,14 +629,27 @@ def fetch_live_headlines(
         except Exception:
             pass
 
+    _HEADLINES_MEMORY_CACHE[cache_key] = (now_ts, (deduped_headlines, metadata))
     return deduped_headlines, metadata
 
 # =====================================================================
 # 4. REAL-TIME MACRO INDICATORS VIA YFINANCE
 # =====================================================================
 
+# =====================================================================
+# IN-MEMORY TTL CACHES FOR LIGHTNING-FAST REBALANCING
+# =====================================================================
+_MARKET_INDICATORS_CACHE: Tuple[float, Dict[str, float]] = (0.0, {})
+_HEADLINES_MEMORY_CACHE: Dict[str, Tuple[float, Tuple[List[Dict[str, Any]], Dict[str, Any]]]] = {}
+_MACRO_BRIEFING_CACHE: Dict[str, Tuple[float, MacroBriefing]] = {}
+
 def fetch_market_macro_indicators() -> Dict[str, float]:
-    """Fetches yield curve, VIX, Oil, Gold, DXY, and EUR/USD with zero API cost and robust fallback."""
+    """Fetches yield curve, VIX, Oil, Gold, DXY, and EUR/USD with zero API cost, in-memory TTL, and robust fallback."""
+    global _MARKET_INDICATORS_CACHE
+    now_ts = time.time()
+    if _MARKET_INDICATORS_CACHE[1] and (now_ts - _MARKET_INDICATORS_CACHE[0] < 900):  # 15 min TTL
+        return _MARKET_INDICATORS_CACHE[1]
+
     symbols = {
         "VIX": "^VIX",
         "US10Y": "^TNX",
@@ -633,7 +667,7 @@ def fetch_market_macro_indicators() -> Dict[str, float]:
         "EURUSD": 1.0845
     }
     try:
-        raw = yf.download(list(symbols.values()), period="5d", progress=False, timeout=5)
+        raw = yf.download(list(symbols.values()), period="5d", progress=False, timeout=3)
         close = raw["Close"] if "Close" in raw else raw
         
         for name, sym in symbols.items():
@@ -646,6 +680,7 @@ def fetch_market_macro_indicators() -> Dict[str, float]:
     except Exception as e:
         print(f"Market macro indicators network notice: {e}. Using cached benchmark baselines.")
         
+    _MARKET_INDICATORS_CACHE = (now_ts, indicators)
     return indicators
 
 # =====================================================================
@@ -722,7 +757,11 @@ def analyze_headline_stream(
 
     # Format headline sample for evaluation
     sample_headlines = headlines[:25]
-    headline_texts = [f"- [{h['source']}] {h['title']} ({h['dt'].strftime('%Y-%m-%d %H:%M')})" for h in sample_headlines]
+    def _fmt_dt(d):
+        if hasattr(d, 'strftime'):
+            return d.strftime('%Y-%m-%d %H:%M')
+        return str(d)[:16].replace('T', ' ')
+    headline_texts = [f"- [{h.get('source', 'News')}] {h.get('title', '')} ({_fmt_dt(h.get('dt', ''))})" for h in sample_headlines]
     joined_text = "\n".join(headline_texts) if headline_texts else "No breaking headlines collected in timeframe."
 
     # --- TIER 1: GOOGLE GEMINI 1.5 FLASH (SINGLE BATCH CALL) ---
@@ -841,6 +880,10 @@ def evaluate_macro_agent(
       3. Real-time / historical market indicators (VIX, 10Y Yield, Oil, Gold, DXY, EUR/USD)
     """
     ref_date = reference_date or trading_date
+    cache_key = f"{trading_date}_{ref_date}"
+    now_ts = time.time()
+    if cache_key in _MACRO_BRIEFING_CACHE and (now_ts - _MACRO_BRIEFING_CACHE[cache_key][0] < 900):
+        return _MACRO_BRIEFING_CACHE[cache_key][1]
 
     # 1. Quantify Unstructured Fed Text
     fed_docs = fetch_live_fed_communication()
@@ -946,7 +989,7 @@ def evaluate_macro_agent(
     if limit_notification:
         summary = f"[{limit_notification}]\n\n" + summary
 
-    return MacroBriefing(
+    briefing = MacroBriefing(
         trading_date=trading_date,
         macro_regime=regime,
         market_sentiment_score=sentiment,
@@ -961,6 +1004,8 @@ def evaluate_macro_agent(
         agent_limit_notification=limit_notification,
         executive_summary=summary
     )
+    _MACRO_BRIEFING_CACHE[cache_key] = (now_ts, briefing)
+    return briefing
 
 def print_macro_briefing(briefing: MacroBriefing, test_title: str) -> None:
     """Helper to display structured results and limit notifications for human review."""

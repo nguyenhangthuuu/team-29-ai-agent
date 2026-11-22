@@ -8,8 +8,9 @@ Supports Mode Mandate vs Mode Advise, Simulation Time-Stepping, and ETF Universe
 
 import os
 import json
+import time
 import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
@@ -194,6 +195,7 @@ def init_simulation(req: InitSimulationRequest):
     Initializes/resets simulation session at start_date with €10,000 cash.
     All market telemetry is anchored to start_date - 1 Close.
     """
+    _REBALANCE_RESPONSE_CACHE.clear()
     telemetry = sim_engine.init_session(
         start_date=req.start_date,
         mode=req.mode,
@@ -210,6 +212,7 @@ def init_simulation(req: InitSimulationRequest):
 @app.post("/api/simulation/step")
 def step_next_trading_day():
     """Advances simulation session by one trading day: Day T -> Day T+1."""
+    _REBALANCE_RESPONSE_CACHE.clear()
     telemetry = sim_engine.step_next_trading_day()
     all_dates = sim_engine.get_available_trading_dates()
     telemetry["available_dates"] = list(reversed(all_dates))
@@ -223,6 +226,7 @@ def step_next_trading_day():
 def jump_to_date(req: JumpDateRequest):
     """Fast-forwards to target_date in the future."""
     try:
+        _REBALANCE_RESPONSE_CACHE.clear()
         telemetry = sim_engine.jump_to_date(req.target_date)
         all_dates = sim_engine.get_available_trading_dates()
         telemetry["available_dates"] = list(reversed(all_dates))
@@ -307,6 +311,8 @@ def get_state():
     return get_simulation_state()
 
 
+_REBALANCE_RESPONSE_CACHE: Dict[str, Tuple[float, dict]] = {}
+
 @app.post("/api/rebalance")
 def run_rebalance(req: RebalanceRequest):
     """
@@ -314,7 +320,7 @@ def run_rebalance(req: RebalanceRequest):
     Supports Mode Mandate (autonomous top 5) and Mode Advise (custom 5 user slots).
     Strict Anti-Lookahead: all market data, tech signals, and stats are anchored to Day T-1 Close.
     """
-    global _last_proposal, _last_risk_eval, _last_signals, _last_macro
+    global _last_proposal, _last_risk_eval, _last_signals, _last_macro, _REBALANCE_RESPONSE_CACHE
     try:
         df = get_market_data()
         if df.empty:
@@ -327,6 +333,14 @@ def run_rebalance(req: RebalanceRequest):
         sim_engine.as_of_market_date = as_of_date
         sim_engine.risk_profile = req.risk_profile
         sim_engine.set_interaction_mode(req.mode)
+
+        # Quick Cache Check for Mandate Mode
+        is_mandate = req.mode.upper() == "MANDATE"
+        cache_key = f"{t_date}_{as_of_date}_{req.risk_profile}_{req.mode.upper()}_{len(_ledger.positions)}"
+        now_ts = time.time()
+        if is_mandate and cache_key in _REBALANCE_RESPONSE_CACHE:
+            if now_ts - _REBALANCE_RESPONSE_CACHE[cache_key][0] < 600:
+                return _REBALANCE_RESPONSE_CACHE[cache_key][1]
 
         # 1. Mark to Market strictly on Day T-1 Close prices
         date_slice = df.loc[:as_of_date]
@@ -548,7 +562,7 @@ def run_rebalance(req: RebalanceRequest):
         min_pub = audit_df['published_at'].min()[:10] if not audit_df.empty and 'published_at' in audit_df.columns else as_of_date
         max_pub = audit_df['published_at'].max()[:10] if not audit_df.empty and 'published_at' in audit_df.columns else as_of_date
 
-        return {
+        response_payload = {
             "nav": round(current_nav, 2),
             "trading_date": t_date,
             "as_of_date": as_of_date,
@@ -597,10 +611,13 @@ def run_rebalance(req: RebalanceRequest):
                 "sync_frequency": "HOURLY (0:00 - 23:00 CET)" if sim_engine.mode == "PRACTICE_LIVE" else "DAILY (0:00 CET)"
             },
             "notice_banner": (
-                f"Phiên giao dịch ngày {t_date} | "
-                f"Giá thực thi và số liệu phân tích được cố định theo giá đóng cửa ngày {as_of_date} (Close T-1)."
+                f"Trading Session {t_date} | "
+                f"Execution price and quantitative models anchored to {as_of_date} Close (Day T-1)."
             )
         }
+        if is_mandate:
+            _REBALANCE_RESPONSE_CACHE[cache_key] = (now_ts, response_payload)
+        return response_payload
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -678,6 +695,7 @@ def execute_orders(req: ExecuteRequest):
     Executes trades at Day T-1 Close price, updates PortfolioLedger, and writes immutable audit trail.
     If auto_step=True, advances to next trading day automatically.
     """
+    _REBALANCE_RESPONSE_CACHE.clear()
     df = get_market_data()
     t_date, as_of_date = sim_engine.resolve_dates(req.trading_date)
 
@@ -749,7 +767,7 @@ def reset_portfolio():
         "positions": {},
         "trade_log": [],
         "cumulative_return_pct": 0.0,
-        "message": "Đã khôi phục toàn bộ khối tài sản về thiết lập ban đầu €10,000.00."
+        "message": "Restored entire portfolio to initial €10,000.00 cash allocation."
     }
 
 
@@ -792,3 +810,22 @@ def serve_index():
         with open(index_path, "r", encoding="utf-8") as f:
             return f.read()
     return "<h1>Belfius ReBel Neo-Terminal UI Loading...</h1>"
+
+
+@app.on_event("startup")
+def prewarm_application_cache():
+    """Pre-warms market data, technical ML signals, macro agent, and initial Mandate rebalancing on server startup."""
+    try:
+        df = get_market_data()
+        t_req = sim_engine.current_trading_date
+        t_date, as_of_date = sim_engine.resolve_dates(t_req)
+        date_slice = df.loc[:as_of_date] if not df.empty else df
+        evaluate_all_etfs(date_slice)
+        evaluate_macro_agent(trading_date=t_date, reference_date=as_of_date)
+        run_rebalance(RebalanceRequest(trading_date=t_date, risk_profile=sim_engine.risk_profile, mode="MANDATE"))
+        print(f"Pre-warmed market cache for session {t_date} (Close T-1: {as_of_date})")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"Startup pre-warming notice: {e}")
+
