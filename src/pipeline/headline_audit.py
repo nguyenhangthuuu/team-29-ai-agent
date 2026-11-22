@@ -11,7 +11,7 @@ import os
 import json
 import re
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import pandas as pd
@@ -104,19 +104,19 @@ def generate_historical_backtest_headlines(
       - All generated timestamps fall strictly within [as_of_dt - lookback_days, as_of_dt]
       - Zero future data leakage.
     """
-    from datetime import timedelta
     parquet_path = Path("data/etf_prices_eur.parquet")
     trading_dates = []
     asset_returns = {}
     
     if isinstance(as_of_dt, str):
-        from datetime import datetime, timezone
         try:
             as_of_dt = datetime.fromisoformat(as_of_dt.replace("Z", "+00:00"))
             if as_of_dt.tzinfo is None:
                 as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
         except Exception:
             as_of_dt = datetime.strptime(as_of_dt[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    elif hasattr(as_of_dt, "tzinfo") and as_of_dt.tzinfo is None:
+        as_of_dt = as_of_dt.replace(tzinfo=timezone.utc)
     
     as_of_date_str = as_of_dt.strftime("%Y-%m-%d")
 

@@ -896,6 +896,7 @@
 
     function updateKpis() {
       document.getElementById('kpi-nav').textContent = `€${state.nav.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      state.cumReturn = state.nav > 0 ? ((state.nav - 10000.0) / 10000.0) * 100 : 0.0;
       const retElem = document.getElementById('kpi-return');
       retElem.textContent = `${state.cumReturn >= 0 ? '+' : ''}${state.cumReturn.toFixed(2)}%`;
       retElem.className = state.cumReturn >= 0 ? "text-2xl font-light tnum text-emerald-400" : "text-2xl font-light tnum text-rose-400";
@@ -1647,7 +1648,7 @@
         // Ensure benchmark scaled series exists
         const benchData = pc.benchmark_nav_scaled && pc.benchmark_nav_scaled.length === pc.dates.length
           ? pc.benchmark_nav_scaled
-          : (pc.benchmark_returns_pct || []).map(r => roundNum(10000.0 * (1.0 + r / 100.0), 2));
+          : (pc.benchmark_returns_pct || []).map(r => (r !== null && r !== undefined) ? roundNum(10000.0 * (1.0 + r / 100.0), 2) : null);
 
         chartInstance = new Chart(ctx, {
           type: 'line',
@@ -1662,7 +1663,8 @@
                 borderWidth: 2.2,
                 fill: true,
                 tension: 0.2,
-                pointRadius: 0,
+                spanGaps: false,
+                pointRadius: 2.5,
                 pointHoverRadius: 5,
                 pointHoverBackgroundColor: '#FFFFFF',
                 pointHoverBorderColor: '#B40036',
@@ -1676,7 +1678,8 @@
                 borderDash: [5, 4],
                 fill: false,
                 tension: 0.2,
-                pointRadius: 0,
+                spanGaps: false,
+                pointRadius: 2.5,
                 pointHoverRadius: 4,
                 pointHoverBackgroundColor: '#38BDF8',
                 pointHoverBorderColor: '#0E121B',
@@ -1706,8 +1709,9 @@
                 bodyFont: { family: 'DM Sans', size: 11 },
                 callbacks: {
                   label: function(context) {
-                    const label = context.dataset.label || '';
                     const val = context.parsed.y;
+                    if (val === null || val === undefined || isNaN(val)) return null;
+                    const label = context.dataset.label || '';
                     const pct = ((val - 10000.0) / 10000.0) * 100;
                     return `${label}: €${val.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%)`;
                   }

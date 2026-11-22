@@ -177,7 +177,7 @@ class SimulationEngine:
     def step_next_trading_day(self) -> Dict[str, Any]:
         """
         Advances session by one trading day: Day T -> Day T+1.
-        Updates Mark-to-Market with the newly revealed day's prices.
+        Updates Mark-to-Market with the newly revealed day's prices and records daily snapshot.
         """
         all_dates = self.get_available_trading_dates()
         if self.current_trading_date in all_dates:
@@ -190,6 +190,10 @@ class SimulationEngine:
                     f"Market data and signals updated to {self.as_of_market_date} Close."
                 )
                 self.update_mtm()
+                # Record daily valuation snapshot for the newly closed market date
+                prices = self.get_market_close_prices(self.as_of_market_date)
+                if prices:
+                    self.ledger.record_daily_snapshot(trade_date=self.as_of_market_date, current_prices=prices)
                 self._save_state()
             else:
                 self.status_message = f"Reached latest available session ({self.current_trading_date}). Cannot advance further."
@@ -198,6 +202,7 @@ class SimulationEngine:
     def jump_to_date(self, target_date_str: str) -> Dict[str, Any]:
         """
         Fast-forwards to target_date_str (must be <= latest available trading day and >= current).
+        Records daily snapshots for all market dates traversed.
         """
         all_dates = self.get_available_trading_dates()
         t_date, as_of_date = self.resolve_dates(target_date_str)
@@ -205,6 +210,15 @@ class SimulationEngine:
 
         if t_date > latest_date:
             raise ValueError(f"Target date {t_date} exceeds latest available market date {latest_date}.")
+
+        df = self.get_prices()
+        if not df.empty and self.as_of_market_date:
+            market_dates = [str(d.date()) for d in df.index]
+            traversed = [d for d in market_dates if self.as_of_market_date < d <= as_of_date]
+            for d in traversed:
+                prices = self.get_market_close_prices(d)
+                if prices:
+                    self.ledger.record_daily_snapshot(trade_date=d, current_prices=prices)
 
         self.current_trading_date = t_date
         self.as_of_market_date = as_of_date

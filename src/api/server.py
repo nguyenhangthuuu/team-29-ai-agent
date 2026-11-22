@@ -481,33 +481,84 @@ def run_rebalance(req: RebalanceRequest):
 
         alternatives_out = proposal.alternative_candidates or []
 
-        # Benchmark WORLD Performance Comparison
+        # Benchmark WORLD Performance Comparison & Synchronized Portfolio Equity Curve
         bench_ret_series = []
         bench_nav_scaled = []
         chart_dates = []
+        port_navs = []
+        port_ret_series = []
 
         if "WORLD" in date_slice.columns:
             w_series = date_slice["WORLD"].dropna().tail(30)
             if not w_series.empty:
-                w0 = w_series.iloc[0]
-                bench_ret_series = [round(float((p - w0) / w0 * 100), 2) for p in w_series]
-                bench_nav_scaled = [round(10000.0 * (1.0 + r / 100.0), 2) for r in bench_ret_series]
                 chart_dates = [str(d.date()) for d in w_series.index]
 
-        # Historical simulated NAV equity curve
-        if len(_ledger.snapshots) > 1:
-            snap_map = {s.trade_date: s.total_nav for s in _ledger.snapshots}
-            port_navs = []
-            running_nav = 10000.0
-            for d in chart_dates:
-                if d in snap_map:
-                    running_nav = snap_map[d]
-                port_navs.append(round(running_nav, 2))
-        else:
-            base_val = round(current_nav, 2)
-            port_navs = [base_val] * len(chart_dates) if chart_dates else [base_val]
+        # Determine the first trading date from execution blotter or snapshots
+        first_trade_date = None
+        if _ledger.trade_history:
+            first_trade_date = _ledger.trade_history[0].trade_date
+        elif _ledger.snapshots:
+            first_trade_date = _ledger.snapshots[0].trade_date
 
-        port_ret_series = [round(((n - 10000.0) / 10000.0) * 100, 2) for n in port_navs]
+        snap_map = {s.trade_date: s for s in _ledger.snapshots}
+
+        # Baseline WORLD price on first_trade_date
+        w0 = None
+        if first_trade_date and "WORLD" in date_slice.columns:
+            w_avail = date_slice["WORLD"].dropna()
+            w_sub = w_avail.loc[:first_trade_date]
+            if not w_sub.empty:
+                w0 = float(w_sub.iloc[-1])
+            elif not w_avail.empty:
+                w0 = float(w_avail.iloc[0])
+
+        for d in chart_dates:
+            if not first_trade_date or d < first_trade_date:
+                # Suppress points and lines for days prior to trading start
+                port_navs.append(None)
+                port_ret_series.append(None)
+                bench_nav_scaled.append(None)
+                bench_ret_series.append(None)
+            else:
+                # Benchmark return on day d anchored to first_trade_date
+                if "WORLD" in date_slice.columns and d in date_slice.index:
+                    w_curr = float(date_slice.loc[d, "WORLD"])
+                    base_w = w0 if (w0 and w0 > 0) else w_curr
+                    b_ret = round(((w_curr - base_w) / base_w) * 100, 2)
+                    b_nav = round(10000.0 * (1.0 + b_ret / 100.0), 2)
+                else:
+                    b_ret = 0.0
+                    b_nav = 10000.0
+                bench_ret_series.append(b_ret)
+                bench_nav_scaled.append(b_nav)
+
+                # Portfolio valuation on day d
+                if d == first_trade_date:
+                    p_nav = 10000.0
+                    p_ret = 0.0
+                elif d in snap_map:
+                    p_nav = snap_map[d].total_nav
+                    p_ret = round(((p_nav - 10000.0) / 10000.0) * 100, 2)
+                elif d == as_of_date:
+                    p_nav = round(current_nav, 2)
+                    p_ret = round(((p_nav - 10000.0) / 10000.0) * 100, 2)
+                else:
+                    # In-between trading days: mark active positions to market at Day d closing prices
+                    if d in date_slice.index:
+                        d_prices = {c: float(date_slice.loc[d, c]) for c in date_slice.columns if pd.notna(date_slice.loc[d, c])}
+                        invested_d = sum(pos.shares * d_prices.get(t, pos.current_price) for t, pos in _ledger.positions.items())
+                        p_nav = round(_ledger.cash + invested_d, 2)
+                    else:
+                        p_nav = round(current_nav, 2)
+                    p_ret = round(((p_nav - 10000.0) / 10000.0) * 100, 2)
+
+                port_navs.append(p_nav)
+                port_ret_series.append(p_ret)
+
+        valid_port_rets = [r for r in port_ret_series if r is not None]
+        valid_bench_rets = [r for r in bench_ret_series if r is not None]
+        latest_port_ret = valid_port_rets[-1] if valid_port_rets else round(((current_nav - 10000.0) / 10000.0) * 100, 2)
+        latest_bench_ret = valid_bench_rets[-1] if valid_bench_rets else 0.0
 
         portfolio_chart = {
             "dates": chart_dates or [t_date],
@@ -515,9 +566,9 @@ def run_rebalance(req: RebalanceRequest):
             "portfolio_returns_pct": port_ret_series,
             "benchmark_nav_scaled": bench_nav_scaled,
             "benchmark_returns_pct": bench_ret_series,
-            "current_return_pct": round(((current_nav - 10000.0) / 10000.0) * 100, 2),
-            "benchmark_return_pct": bench_ret_series[-1] if bench_ret_series else 0.0,
-            "alpha_pct": round(((current_nav - 10000.0) / 10000.0) * 100 - (bench_ret_series[-1] if bench_ret_series else 0.0), 2)
+            "current_return_pct": latest_port_ret,
+            "benchmark_return_pct": latest_bench_ret,
+            "alpha_pct": round(latest_port_ret - latest_bench_ret, 2)
         }
 
         # 5. Audited 5-Day Headlines with Real Sources and Clickable URLs
@@ -742,13 +793,13 @@ def execute_orders(req: ExecuteRequest):
         "success": True,
         "message": message,
         "stepped_next_day": next_day_stepped,
-        "nav": round(snapshot.total_nav, 2),
-        "cash_balance": round(snapshot.cash, 2),
+        "nav": round(telemetry["portfolio_nav"], 2),
+        "cash_balance": round(telemetry["cash_balance"], 2),
         "positions": telemetry["positions"],
         "trade_log": telemetry["trade_log"],
         "current_trading_date": sim_engine.current_trading_date,
         "as_of_market_date": sim_engine.as_of_market_date,
-        "cumulative_return_pct": round(snapshot.cumulative_return_pct, 2)
+        "cumulative_return_pct": round(telemetry["cumulative_return_pct"], 2)
     }
 
 

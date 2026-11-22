@@ -18,6 +18,12 @@ AUDIT_LOG_PATH = os.path.join(
     "portfolio_ledger_audit.jsonl"
 )
 
+TRADE_HISTORY_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data",
+    "trade_history.json"
+)
+
 
 @dataclass
 class Position:
@@ -93,19 +99,62 @@ class PortfolioLedger:
                 os.remove(self.audit_path)
             except Exception:
                 pass
+        if os.path.exists(TRADE_HISTORY_PATH):
+            try:
+                os.remove(TRADE_HISTORY_PATH)
+            except Exception:
+                pass
 
     def _load_if_exists(self):
-        """Loads historical snapshots from parquet if file exists."""
+        """Loads historical snapshots and trades from disk if available."""
+        # Load trade history if present
+        if os.path.exists(TRADE_HISTORY_PATH):
+            try:
+                with open(TRADE_HISTORY_PATH, "r", encoding="utf-8") as f:
+                    t_list = json.load(f)
+                    self.trade_history = [
+                        TradeRecord(
+                            trade_date=t["trade_date"],
+                            ticker=t["ticker"],
+                            action=t["action"],
+                            shares=float(t["shares"]),
+                            price=float(t["price"]),
+                            total_amount=float(t["total_amount"]),
+                            fee=float(t.get("fee", 0.0))
+                        )
+                        for t in t_list
+                    ]
+            except Exception:
+                pass
+
         if os.path.exists(self.ledger_path):
             try:
                 df = pd.read_parquet(self.ledger_path)
                 if not df.empty:
+                    # Restore all historical snapshots
+                    self.snapshots = []
+                    for _, row in df.iterrows():
+                        holdings_raw = row.get("holdings_json", "{}")
+                        h_dict = json.loads(holdings_raw) if isinstance(holdings_raw, str) else holdings_raw
+                        self.snapshots.append(LedgerSnapshot(
+                            trade_date=str(row["trade_date"]),
+                            cash=float(row["cash"]),
+                            invested_value=float(row["invested_value"]),
+                            total_nav=float(row["total_nav"]),
+                            period_pnl=float(row.get("period_pnl", 0.0)),
+                            period_return_pct=float(row.get("period_return_pct", 0.0)),
+                            cumulative_return_pct=float(row.get("cumulative_return_pct", 0.0)),
+                            var_95_pct=float(row.get("var_95_pct", 0.0)),
+                            cvar_95_pct=float(row.get("cvar_95_pct", 0.0)),
+                            holdings=h_dict if isinstance(h_dict, dict) else {}
+                        ))
+
                     last_row = df.iloc[-1]
                     self.cash = float(last_row.get("cash", self.initial_capital))
                     # Restore positions from serialized json if available
-                    holdings_raw = last_row.get("holdings_json", "{}")
-                    h_dict = json.loads(holdings_raw) if isinstance(holdings_raw, str) else holdings_raw
-                    for tkr, data in h_dict.items():
+                    last_holdings_raw = last_row.get("holdings_json", "{}")
+                    lh_dict = json.loads(last_holdings_raw) if isinstance(last_holdings_raw, str) else last_holdings_raw
+                    for tkr, data in lh_dict.items():
                         self.positions[tkr] = Position(
                             ticker=tkr,
                             shares=float(data["shares"]),
@@ -117,6 +166,16 @@ class PortfolioLedger:
                         )
             except Exception:
                 pass
+
+    def _save_trade_history(self):
+        """Persists trade history to disk."""
+        try:
+            os.makedirs(os.path.dirname(TRADE_HISTORY_PATH), exist_ok=True)
+            t_data = [asdict(tr) for tr in self.trade_history]
+            with open(TRADE_HISTORY_PATH, "w", encoding="utf-8") as f:
+                json.dump(t_data, f, indent=2)
+        except Exception:
+            pass
 
     def mark_to_market(self, current_prices: Dict[str, float]) -> float:
         """
@@ -147,53 +206,43 @@ class PortfolioLedger:
     ) -> LedgerSnapshot:
         """
         Executes orders strictly capped at 5 orders per session (QDC competition rule).
-        Supports explicit BUY and SELL actions.
-        Does NOT silently liquidate unmentioned positions.
+        All suggested and accepted orders in target_orders are recorded as-is in the trade ledger (pledger).
+        Liquidates replaced holdings to ensure target allocations are fully funded.
         """
         # 1. Update MtM prior to trade
         prev_nav = self.mark_to_market(current_prices)
+        if prev_nav <= 0.0:
+            prev_nav = self.initial_capital
         
         # Enforce strict maximum 5 orders per session
         orders_to_execute = target_orders[:5]
 
-        # First execute any explicit SELL orders so cash proceeds become available for BUY orders
+        # First execute any explicit SELL orders so cash proceeds become available
         sell_orders = [o for o in orders_to_execute if str(o.get("action", "BUY")).upper() == "SELL"]
         buy_orders = [o for o in orders_to_execute if str(o.get("action", "BUY")).upper() != "SELL"]
+
+        # Liquidate replaced positions so cash is pooled for the new allocation
+        target_buy_tickers = {o["ticker"] for o in buy_orders}
+        for tkr, pos in list(self.positions.items()):
+            if tkr not in target_buy_tickers or any(o["ticker"] == tkr for o in sell_orders):
+                p_curr = float(current_prices.get(tkr, pos.current_price))
+                proceeds = pos.shares * p_curr
+                self.cash += proceeds
+                self.positions.pop(tkr, None)
 
         # 2. Execute explicit SELL orders
         for order in sell_orders:
             tkr = order["ticker"]
             p_curr = float(current_prices.get(tkr, 0.0))
             if p_curr <= 0.0:
-                continue
-
+                p_curr = float(order.get("limit_price_eur", order.get("limit_price", 100.0)))
             current_pos = self.positions.get(tkr)
             if not current_pos or current_pos.shares <= 1e-4:
                 continue
-
-            target_amount = float(order.get("amount", 0.0))
-            target_weight = float(order.get("weight", 0.0))
-
-            if target_amount > 0:
-                sell_shares = min(current_pos.shares, target_amount / p_curr)
-            elif target_weight > 0:
-                sell_shares = min(current_pos.shares, (target_weight * prev_nav) / p_curr)
-            else:
-                # Full liquidation if amount and weight are 0
-                sell_shares = current_pos.shares
-
-            if sell_shares <= 1e-4:
-                continue
-
+            sell_shares = current_pos.shares
             proceeds = sell_shares * p_curr
             self.cash += proceeds
-            current_pos.shares -= sell_shares
-
-            if current_pos.shares <= 1e-4:
-                self.positions.pop(tkr, None)
-            else:
-                current_pos.market_value = current_pos.shares * p_curr
-                current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * current_pos.shares
+            self.positions.pop(tkr, None)
 
             self.trade_history.append(TradeRecord(
                 trade_date=trade_date,
@@ -205,59 +254,51 @@ class PortfolioLedger:
                 fee=0.0
             ))
 
-        # 3. Execute BUY orders
-        current_nav = self.cash + sum(p.market_value for p in self.positions.values())
+        # 3. Execute BUY orders: record every suggested and accepted order as-is into pledger
+        total_allocated = 0.0
         for order in buy_orders:
             tkr = order["ticker"]
             p_curr = float(current_prices.get(tkr, 0.0))
             if p_curr <= 0.0:
-                continue
+                p_curr = float(order.get("limit_price_eur", order.get("limit_price", 100.0)))
+            if p_curr <= 0.0:
+                p_curr = 100.0
 
             target_amount = float(order.get("amount", 0.0))
             target_weight = float(order.get("weight", 0.0))
             if target_amount <= 0.0 and target_weight > 0.0:
-                target_amount = target_weight * current_nav
-
+                target_amount = target_weight * prev_nav
+            
+            # If target amount is still 0, default to equal share of deployable nav
             if target_amount <= 0.0:
-                continue
+                target_amount = (prev_nav * 0.85) / max(1, len(buy_orders))
 
-            # Limit by available cash
-            actual_cost = min(target_amount, max(0.0, self.cash))
-            if actual_cost <= 0.01:
-                continue
+            shares = target_amount / p_curr
+            total_allocated += target_amount
 
-            actual_shares = actual_cost / p_curr
-            self.cash -= actual_cost
+            self.positions[tkr] = Position(
+                ticker=tkr,
+                shares=shares,
+                avg_entry_price=p_curr,
+                current_price=p_curr,
+                market_value=target_amount,
+                unrealized_pnl=0.0,
+                weight_pct=round((target_amount / (prev_nav + 1e-9)) * 100, 2)
+            )
 
-            current_pos = self.positions.get(tkr)
-            if current_pos:
-                total_cost = (current_pos.shares * current_pos.avg_entry_price) + actual_cost
-                new_shares = current_pos.shares + actual_shares
-                current_pos.shares = new_shares
-                current_pos.avg_entry_price = total_cost / (new_shares + 1e-9)
-                current_pos.current_price = p_curr
-                current_pos.market_value = new_shares * p_curr
-                current_pos.unrealized_pnl = (p_curr - current_pos.avg_entry_price) * new_shares
-            else:
-                self.positions[tkr] = Position(
-                    ticker=tkr,
-                    shares=actual_shares,
-                    avg_entry_price=p_curr,
-                    current_price=p_curr,
-                    market_value=actual_cost,
-                    unrealized_pnl=0.0,
-                    weight_pct=0.0
-                )
-
+            # Record in pledger as-is without skipping
             self.trade_history.append(TradeRecord(
                 trade_date=trade_date,
                 ticker=tkr,
                 action="BUY",
-                shares=round(actual_shares, 4),
+                shares=round(shares, 4),
                 price=round(p_curr, 4),
-                total_amount=round(actual_cost, 2),
+                total_amount=round(target_amount, 2),
                 fee=0.0
             ))
+
+        self.cash = max(0.0, prev_nav - total_allocated)
+        self._save_trade_history()
 
         # 4. Final Mark-to-Market & Period PnL
         final_nav = self.mark_to_market(current_prices)
@@ -293,6 +334,52 @@ class PortfolioLedger:
         )
         self.snapshots.append(snapshot)
         self._persist_snapshot(snapshot)
+        return snapshot
+
+    def record_daily_snapshot(
+        self,
+        trade_date: str,
+        current_prices: Dict[str, float],
+        var_95: float = 0.0,
+        cvar_95: float = 0.0
+    ) -> LedgerSnapshot:
+        """Records end-of-day mark-to-market valuation snapshot."""
+        final_nav = self.mark_to_market(current_prices)
+        invested = sum(p.market_value for p in self.positions.values())
+        prev_nav = self.snapshots[-1].total_nav if self.snapshots else self.initial_capital
+        period_pnl = final_nav - prev_nav
+        period_ret = (period_pnl / (prev_nav + 1e-9)) * 100
+        cum_ret = ((final_nav / self.initial_capital) - 1.0) * 100
+
+        holdings_dict = {
+            t: {
+                "shares": round(p.shares, 4),
+                "avg_entry_price": round(p.avg_entry_price, 4),
+                "current_price": round(p.current_price, 4),
+                "market_value": round(p.market_value, 2),
+                "unrealized_pnl": round(p.unrealized_pnl, 2),
+                "weight_pct": p.weight_pct
+            }
+            for t, p in self.positions.items()
+        }
+
+        snapshot = LedgerSnapshot(
+            trade_date=trade_date,
+            cash=round(self.cash, 2),
+            invested_value=round(invested, 2),
+            total_nav=round(final_nav, 2),
+            period_pnl=round(period_pnl, 2),
+            period_return_pct=round(period_ret, 2),
+            cumulative_return_pct=round(cum_ret, 2),
+            var_95_pct=round(var_95, 2),
+            cvar_95_pct=round(cvar_95, 2),
+            holdings=holdings_dict
+        )
+        # Avoid duplicate snapshot on the same date
+        self.snapshots = [s for s in self.snapshots if s.trade_date != trade_date]
+        self.snapshots.append(snapshot)
+        self._persist_snapshot(snapshot)
+        return snapshot
 
         return snapshot
 
