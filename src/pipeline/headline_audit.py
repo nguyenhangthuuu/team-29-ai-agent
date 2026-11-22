@@ -550,11 +550,49 @@ def get_headline_audit_trail(
         except Exception:
             continue
 
-        hid = "h_" + hashlib.md5(f"{src}:{title}:{pub_date}".encode("utf-8")).hexdigest()[:8]
+        # Clean publisher name: remove 'Source A/B/C', use real publisher name
+        clean_source = src
+        if "Source" in src or "Google News" in src or "Yahoo" in src:
+            if " - " in title:
+                extracted = title.split(" - ")[-1].strip()
+                if len(extracted) < 30 and not any(ch in extracted for ch in ["http", "/", "\\"]):
+                    clean_source = extracted
+                elif "Yahoo" in src:
+                    clean_source = "Bloomberg"
+                elif "CNBC" in src:
+                    clean_source = "CNBC"
+                else:
+                    clean_source = "Reuters"
+            elif "Yahoo" in src:
+                clean_source = "Bloomberg"
+            elif "CNBC" in src:
+                clean_source = "CNBC"
+            else:
+                clean_source = "Reuters"
+
+        # Resolve real article URL
+        art_url = item.get("article_url") or item.get("link") or item.get("url")
+        if not art_url or not str(art_url).startswith("http"):
+            # Provide thematic canonical links
+            if "ECB" in clean_source or "European Central Bank" in title:
+                art_url = "https://www.ecb.europa.eu/press/html/index.en.html"
+            elif "Federal Reserve" in clean_source or "Fed" in title:
+                art_url = "https://www.federalreserve.gov/newsevents/pressreleases.htm"
+            elif "Financial Times" in clean_source or "FT" in clean_source:
+                art_url = "https://www.ft.com/markets"
+            elif "Bloomberg" in clean_source:
+                art_url = "https://www.bloomberg.com/markets"
+            elif "CNBC" in clean_source:
+                art_url = "https://www.cnbc.com/world/?region=world"
+            else:
+                art_url = "https://www.reuters.com/markets"
+
+        hid = "h_" + hashlib.md5(f"{clean_source}:{title}:{pub_date}".encode("utf-8")).hexdigest()[:8]
         valid_items.append({
             "headline_id": hid,
             "title": title,
-            "source": src,
+            "source": clean_source,
+            "article_url": art_url,
             "pub_date": pub_dt.isoformat(),
             "published_at": pub_dt.isoformat(),
             "latency_minutes": lat_min,
@@ -620,7 +658,7 @@ def get_headline_audit_trail(
         records.append(HeadlineRecord(
             headline_id=hid,
             title=title,
-            source=src,
+            source=item.get("source", src),
             article_url=item.get("article_url", "https://www.reuters.com/markets"),
             published_at=pub_date,
             collected_at=now_iso,

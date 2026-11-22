@@ -843,6 +843,7 @@
 
         updateNoticeBanners();
         updateKpis();
+        renderOrders();
         renderLedgerTables();
       } catch (err) {
         showToast("Không thể tải trạng thái mô phỏng: " + err.message, "error");
@@ -1208,6 +1209,7 @@
         document.getElementById('date-select').value = state.currentTradingDate;
         updateNoticeBanners();
         updateKpis();
+        renderOrders();
         renderLedgerTables();
         await runRebalance();
 
@@ -1260,6 +1262,7 @@
 
         updateNoticeBanners();
         updateKpis();
+        renderOrders();
         renderLedgerTables();
         await runRebalance();
         showToast(`Đã nhảy tới ngày ${state.currentTradingDate}`, "success");
@@ -1311,6 +1314,7 @@
         document.getElementById('date-select').value = state.currentTradingDate;
         updateNoticeBanners();
         updateKpis();
+        renderOrders();
         renderLedgerTables();
         await runRebalance();
         showToast("Đã khôi phục toàn bộ khối tài sản về €10,000 vốn khởi tạo!", "success");
